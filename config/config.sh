@@ -5,9 +5,9 @@
 # DATA PATHS
 # ============================================================================
 # IMPORTANT: Change these to your actual data locations
-export TRAIN_PATH="../data/segmentation_train.json"
-export VAL_PATH="../data/segmentation_val.json"
-export TEST_PATH="../data/segmentation_test.json"
+export TRAIN_PATH="data/segmentation_train.jsonl"
+export VAL_PATH="data/segmentation_val.jsonl"
+export TEST_PATH="data/segmentation_test.jsonl"
 
 # ============================================================================
 # TASK CONFIGURATION

@@ -241,13 +241,29 @@ def set_seed(seed: int):
 
 
 def load_data(json_path: str) -> Tuple[List[str], List[List[str]]]:
+    texts = []
+    labels = []
     """Load data from JSON file"""
-    with open(json_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    texts = [sample['text'] for sample in data]
-    labels = [sample['labels'] for sample in data]
-    
+    with open(json_path, "r", encoding="utf-8") as f:
+        first = f.read(1)
+        f.seek(0)
+
+        # Case 1: JSON array
+        if first == "[":
+            data = json.load(f)
+            for item in data:
+                texts.append(item["text"])
+                labels.append(item["labels"])
+
+        # Case 2: JSONL
+        else:
+            for line in f:
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                texts.append(item["text"])
+                labels.append(item["labels"])
+
     return texts, labels
 
 
