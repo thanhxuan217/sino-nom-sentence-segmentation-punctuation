@@ -31,6 +31,9 @@ cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 # SETUP ENVIRONMENT
 # ============================================================================
 
+# Ensure required directories exist
+mkdir -p logs outputs models
+
 echo "=========================================="
 echo "Multi-GPU Training Job"
 echo "Job ID: $SLURM_JOB_ID"
