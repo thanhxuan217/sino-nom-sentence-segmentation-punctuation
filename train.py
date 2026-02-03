@@ -7,6 +7,7 @@ Converted from Jupyter notebook for SLURM execution
 import argparse
 import json
 import logging
+import multiprocessing
 import os
 import random
 import math
@@ -325,8 +326,15 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
             
             with torch.cuda.amp.autocast(enabled=use_amp and torch.cuda.is_available()):
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            
-            total_loss += outputs['loss'].item()
+
+            loss = outputs['loss']
+            if loss is None:
+                raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
+            # DataParallel gathers per-device scalar losses into a vector; reduce to scalar.
+            if loss.dim() > 0:
+                loss = loss.mean()
+
+            total_loss += loss.item()
             predictions = torch.argmax(outputs['logits'], dim=-1)
             
             # Collect predictions and labels (excluding -100)
@@ -383,6 +391,12 @@ def train_epoch(model, train_loader, optimizer, scheduler, device, config, scale
         with torch.cuda.amp.autocast(enabled=use_amp):
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
             loss = outputs['loss']
+
+        if loss is None:
+            raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
+        # DataParallel gathers per-device scalar losses into a vector; reduce to scalar.
+        if loss.dim() > 0:
+            loss = loss.mean()
         
         if config.gradient_accumulation_steps > 1:
             loss = loss / config.gradient_accumulation_steps
@@ -502,6 +516,12 @@ def train_with_early_stopping(
 # ============================================================================
 
 def main():
+    # Set multiprocessing start method for CUDA compatibility on Slurm
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass  # Already set
+    
     parser = argparse.ArgumentParser(description='Train SikuBERT with CNN')
     
     # Task configuration
@@ -542,6 +562,16 @@ def main():
                        help='Patience for early stopping')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
+    
+    # DataLoader configuration (important for Slurm)
+    parser.add_argument('--num_workers', type=int, default=0,
+                       help='Number of DataLoader workers (set 0 for Slurm compatibility)')
+    parser.add_argument('--fp16', action='store_true', default=False,
+                       help='Use mixed precision training (FP16)')
+    parser.add_argument('--pin_memory', action='store_true', default=False,
+                       help='Pin memory for DataLoader')
+    parser.add_argument('--persistent_workers', action='store_true', default=False,
+                       help='Use persistent workers for DataLoader')
     
     # CNN configuration
     parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7],
@@ -626,7 +656,11 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         early_stopping_patience=args.early_stopping_patience,
         device=device,
-        seed=args.seed
+        seed=args.seed,
+        num_workers=args.num_workers,
+        fp16=args.fp16,
+        pin_memory=args.pin_memory,
+        persistent_workers=args.persistent_workers
     )
     
     # Load tokenizer

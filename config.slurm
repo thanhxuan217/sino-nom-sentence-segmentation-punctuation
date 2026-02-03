@@ -36,6 +36,18 @@ export GRADIENT_ACCUMULATION_STEPS=1
 export EARLY_STOPPING_PATIENCE=3
 
 # ============================================================================
+# DATALOADER CONFIGURATION (Multiprocessing on Slurm)
+# ============================================================================
+# Number of DataLoader workers (adjust based on CPU cores allocated)
+export NUM_WORKERS=4
+# Enable FP16 mixed precision training (recommended for GPU)
+export FP16="--fp16"
+# Pin memory for faster GPU transfer
+export PIN_MEMORY="--pin_memory"
+# Persistent workers (keeps workers alive between epochs, faster but uses more memory)
+export PERSISTENT_WORKERS="--persistent_workers"
+
+# ============================================================================
 # CNN CONFIGURATION
 # ============================================================================
 export CNN_KERNEL_SIZES="3 5 7"
