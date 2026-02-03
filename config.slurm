@@ -47,22 +47,3 @@ export CNN_NUM_FILTERS=256
 export OUTPUT_DIR="outputs"
 export MODEL_SAVE_DIR="models"
 export LOG_DIR="logs"
-
-# ============================================================================
-# ENVIRONMENT CONFIGURATION
-# ============================================================================
-# Uncomment and modify if needed
-# export TRANSFORMERS_CACHE="/path/to/cache/transformers"
-# export HF_HOME="/path/to/cache/huggingface"
-# export PYTHONUNBUFFERED=1
-
-# ============================================================================
-# CLUSTER-SPECIFIC SETTINGS (for reference)
-# ============================================================================
-# These are typically set in the SLURM script header
-# export SLURM_PARTITION="gpu"
-# export SLURM_NODES=1
-# export SLURM_CPUS_PER_TASK=4
-# export SLURM_GPUS=1
-# export SLURM_MEM="32G"
-# export SLURM_TIME="24:00:00"

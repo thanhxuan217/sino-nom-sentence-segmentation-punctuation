@@ -16,7 +16,7 @@ SBATCH --mail-user=xuanhuynh233@gmail.com  # Your email
 # LOAD CONFIGURATION
 # ============================================================================
 # Source the configuration file for parameters
-source config.sh
+source config.slurm
 
 # ============================================================================
 # SETUP ENVIRONMENT

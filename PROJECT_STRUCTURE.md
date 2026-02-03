@@ -10,14 +10,14 @@ sikubert-slurm-training/
 ├── 📄 README.md                         # Documentation
 │
 ├── 🔧 Configuration Files
-│   ├── config.sh                        # Centralized configuration
-│   ├── run_slurm.sh                     # SLURM script (standalone)
-│   ├── run_slurm_with_config.sh         # SLURM script (uses config.sh)
-│   └── run_slurm_multigpu.sh            # Multi-GPU SLURM script
+│   ├── config.slurm                      # Centralized configuration
+│   ├── run.slurm                        # SLURM script (standalone)
+│   ├── run_slurm_with_config.slurm      # SLURM script (uses config.slurm)
+│   └── run_slurm_multigpu.slurm         # Multi-GPU SLURM script
 │
 ├── 🛠️ Utility Scripts
-│   ├── setup.sh                         # Initial setup script
-│   └── slurm_helper.sh                  # Job management helper
+│   ├── setup.slurm                      # Initial setup script
+│   └── slurm_helper.slurm               # Job management helper
 │
 ├── 📂 data/                             # Your training data
 │   ├── segmentation_train.json          # Training set
@@ -81,7 +81,7 @@ sikubert-slurm-training/
 
 ### 2. Configuration File Structure
 
-**File**: `config.sh`
+**File**: `config.slurm`
 
 ```bash
 # Data paths - YOU MUST MODIFY THESE
@@ -501,15 +501,15 @@ Output: Predictions + Loss
 ## 🚀 Execution Flow
 
 ```
-1. User edits config.sh
+1. User edits config.slurm
    └─> Sets data paths, hyperparameters
    
-2. User submits: sbatch run_slurm_with_config.sh
+2. User submits: sbatch run_slurm_with_config.slurm
    └─> SLURM schedules job on GPU node
    
 3. Job starts on compute node
    ├─> Loads environment (modules, virtualenv)
-   ├─> Sources config.sh
+   ├─> Sources config.slurm
    ├─> Creates directories (logs/, outputs/, models/)
    └─> Executes: python train.py [args...]
    
@@ -534,7 +534,7 @@ Output: Predictions + Loss
    └─> Logs saved to logs/
    
 6. User checks results
-   └─> ./slurm_helper.sh logs <job_id>
+   └─> ./slurm_helper.slurm logs <job_id>
 ```
 
 ---

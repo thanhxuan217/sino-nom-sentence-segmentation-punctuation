@@ -38,9 +38,9 @@ Your data should be in JSON format with the following structure:
 
 ### 3. Configure Your Training
 
-**Option A: Edit `config.sh`**
+**Option A: Edit `config.slurm`**
 
-Modify the `config.sh` file with your settings:
+Modify the `config.slurm` file with your settings:
 
 ```bash
 # Edit data paths
@@ -60,7 +60,7 @@ export NUM_EPOCHS=5
 ### 4. Submit to SLURM
 
 ```bash
-sbatch run_slurm.sh
+sbatch run.slurm
 ```
 
 ### 5. Monitor Your Job
@@ -179,7 +179,7 @@ You can modify the script to run hyperparameter searches:
 ```bash
 for lr in 1e-5 2e-5 5e-5; do
     for bs in 32 64 128; do
-        sbatch --export=LEARNING_RATE=$lr,BATCH_SIZE=$bs run_slurm.sh
+        sbatch --export=LEARNING_RATE=$lr,BATCH_SIZE=$bs run.slurm
     done
 done
 ```

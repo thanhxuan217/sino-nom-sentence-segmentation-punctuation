@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 # Function to display usage
 usage() {
-    echo "Usage: ./slurm_helper.sh [COMMAND] [OPTIONS]"
+    echo "Usage: ./slurm_helper.slurm [COMMAND] [OPTIONS]"
     echo ""
     echo "Commands:"
     echo "  submit [script]     Submit a SLURM job"
@@ -25,10 +25,10 @@ usage() {
     echo "  cleanup             Clean up old log files"
     echo ""
     echo "Examples:"
-    echo "  ./slurm_helper.sh submit run_slurm.sh"
-    echo "  ./slurm_helper.sh status"
-    echo "  ./slurm_helper.sh tail 12345"
-    echo "  ./slurm_helper.sh cancel 12345"
+    echo "  ./slurm_helper.slurm submit run.slurm"
+    echo "  ./slurm_helper.slurm status"
+    echo "  ./slurm_helper.slurm tail 12345"
+    echo "  ./slurm_helper.slurm cancel 12345"
 }
 
 # Function to submit a job
@@ -36,7 +36,7 @@ submit_job() {
     local script=$1
     if [ -z "$script" ]; then
         echo -e "${RED}Error: No script specified${NC}"
-        echo "Usage: ./slurm_helper.sh submit <script.sh>"
+        echo "Usage: ./slurm_helper.slurm submit <script.slurm>"
         exit 1
     fi
     
@@ -60,7 +60,7 @@ cancel_job() {
     local job_id=$1
     if [ -z "$job_id" ]; then
         echo -e "${RED}Error: No job ID specified${NC}"
-        echo "Usage: ./slurm_helper.sh cancel <job_id>"
+        echo "Usage: ./slurm_helper.slurm cancel <job_id>"
         exit 1
     fi
     
@@ -74,7 +74,7 @@ view_logs() {
     local job_id=$1
     if [ -z "$job_id" ]; then
         echo -e "${RED}Error: No job ID specified${NC}"
-        echo "Usage: ./slurm_helper.sh logs <job_id>"
+        echo "Usage: ./slurm_helper.slurm logs <job_id>"
         exit 1
     fi
     
@@ -103,7 +103,7 @@ tail_logs() {
     local job_id=$1
     if [ -z "$job_id" ]; then
         echo -e "${RED}Error: No job ID specified${NC}"
-        echo "Usage: ./slurm_helper.sh tail <job_id>"
+        echo "Usage: ./slurm_helper.slurm tail <job_id>"
         exit 1
     fi
     
@@ -139,7 +139,7 @@ job_info() {
     local job_id=$1
     if [ -z "$job_id" ]; then
         echo -e "${RED}Error: No job ID specified${NC}"
-        echo "Usage: ./slurm_helper.sh info <job_id>"
+        echo "Usage: ./slurm_helper.slurm info <job_id>"
         exit 1
     fi
     
