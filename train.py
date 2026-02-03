@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import random
+import math
 import sys
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
@@ -405,7 +406,8 @@ def train_with_early_stopping(
         weight_decay=training_config.weight_decay
     )
     
-    num_training_steps = len(train_loader) * training_config.num_epochs
+    steps_per_epoch = math.ceil(len(train_loader) / training_config.gradient_accumulation_steps)
+    num_training_steps = steps_per_epoch * training_config.num_epochs
     num_warmup_steps = int(num_training_steps * training_config.warmup_ratio)
     
     scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -496,6 +498,12 @@ def main():
                        help='Weight decay')
     parser.add_argument('--dropout', type=float, default=0.1,
                        help='Dropout rate')
+    parser.add_argument('--max_grad_norm', type=float, default=1.0,
+                       help='Max gradient norm (for clipping)')
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
+                       help='Number of steps for gradient accumulation')
+    parser.add_argument('--early_stopping_patience', type=int, default=3,
+                       help='Patience for early stopping')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
     
@@ -510,15 +518,18 @@ def main():
                        help='Output directory')
     parser.add_argument('--model_save_dir', type=str, default='models',
                        help='Model save directory')
+    parser.add_argument('--log_dir', type=str, default='logs',
+                       help='Log directory')
     
     args = parser.parse_args()
     
     # Create output directories
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.model_save_dir, exist_ok=True)
+    os.makedirs(args.log_dir, exist_ok=True)
     
     # Setup logging
-    log_file = os.path.join(args.output_dir, f"train_{args.task}.log")
+    log_file = os.path.join(args.log_dir, f"train_{args.task}.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(message)s",
@@ -575,6 +586,9 @@ def main():
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
         dropout=args.dropout,
+        max_grad_norm=args.max_grad_norm,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        early_stopping_patience=args.early_stopping_patience,
         device=device,
         seed=args.seed
     )

@@ -5,7 +5,15 @@ This repository contains code to fine-tune SikuBERT with CNN layers for token cl
 
 ## 🚀 Quick Start
 
-### 1. Setup Environment
+### 1. Run Setup Script (Recommended)
+
+This will create required folders (`logs`, `outputs`, `models`, `data`) and check SLURM/CUDA availability:
+
+```bash
+bash setup.slurm
+```
+
+### 2. Setup Environment
 
 First, ensure you have the required dependencies installed:
 
@@ -19,7 +27,7 @@ conda activate sikubert
 pip install -r requirements.txt
 ```
 
-### 2. Prepare Your Data
+### 3. Prepare Your Data
 
 Your data should be in JSON format with the following structure:
 
@@ -36,7 +44,7 @@ Your data should be in JSON format with the following structure:
 ]
 ```
 
-### 3. Configure Your Training
+### 4. Configure Your Training
 
 **Option A: Edit `config.slurm`**
 
@@ -57,13 +65,13 @@ export LEARNING_RATE=2e-5
 export NUM_EPOCHS=5
 ```
 
-### 4. Submit to SLURM
+### 5. Submit to SLURM
 
 ```bash
 sbatch run.slurm
 ```
 
-### 5. Monitor Your Job
+### 6. Monitor Your Job
 
 ```bash
 # Check job status
