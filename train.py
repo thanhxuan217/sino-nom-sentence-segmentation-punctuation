@@ -73,6 +73,9 @@ class TrainingConfig:
     seed: int = 42
     gradient_accumulation_steps: int = 1
     fp16: bool = True
+    num_workers: int = 4
+    pin_memory: bool = True
+    persistent_workers: bool = True
 
 
 # ============================================================================
@@ -289,18 +292,24 @@ def create_dataloaders(
     train_loader = DataLoader(
         train_dataset,
         batch_size=training_config.batch_size,
-        shuffle=True
+        shuffle=True,
+        num_workers=training_config.num_workers,
+        pin_memory=training_config.pin_memory,
+        persistent_workers=training_config.persistent_workers
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=training_config.batch_size,
-        shuffle=False
+        shuffle=False,
+        num_workers=training_config.num_workers,
+        pin_memory=training_config.pin_memory,
+        persistent_workers=training_config.persistent_workers
     )
     
     return train_loader, val_loader
 
 
-def evaluate_model(model, dataloader, task_config, device):
+def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False):
     """Evaluate model on a dataset"""
     model.eval()
     
@@ -314,7 +323,8 @@ def evaluate_model(model, dataloader, task_config, device):
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
             
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            with torch.cuda.amp.autocast(enabled=use_amp and torch.cuda.is_available()):
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
             
             total_loss += outputs['loss'].item()
             predictions = torch.argmax(outputs['logits'], dim=-1)
@@ -357,10 +367,11 @@ def evaluate_model(model, dataloader, task_config, device):
     }
 
 
-def train_epoch(model, train_loader, optimizer, scheduler, device, config):
+def train_epoch(model, train_loader, optimizer, scheduler, device, config, scaler=None):
     """Train for one epoch"""
     model.train()
     total_loss = 0.0
+    use_amp = scaler is not None and scaler.is_enabled()
     
     progress_bar = tqdm(train_loader, desc="Training")
     
@@ -369,22 +380,33 @@ def train_epoch(model, train_loader, optimizer, scheduler, device, config):
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
         
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-        loss = outputs['loss']
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs['loss']
         
         if config.gradient_accumulation_steps > 1:
             loss = loss / config.gradient_accumulation_steps
         
-        loss.backward()
+        if use_amp:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         
         if (step + 1) % config.gradient_accumulation_steps == 0:
+            if use_amp:
+                scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-            optimizer.step()
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
         
-        total_loss += loss.item()
-        progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+        step_loss = loss.item() * (config.gradient_accumulation_steps if config.gradient_accumulation_steps > 1 else 1)
+        total_loss += step_loss
+        progress_bar.set_postfix({'loss': f'{step_loss:.4f}'})
     
     return total_loss / len(train_loader)
 
@@ -405,6 +427,7 @@ def train_with_early_stopping(
         lr=training_config.learning_rate,
         weight_decay=training_config.weight_decay
     )
+    scaler = torch.cuda.amp.GradScaler(enabled=training_config.fp16 and torch.cuda.is_available())
     
     steps_per_epoch = math.ceil(len(train_loader) / training_config.gradient_accumulation_steps)
     num_training_steps = steps_per_epoch * training_config.num_epochs
@@ -428,11 +451,24 @@ def train_with_early_stopping(
         logger.info(f"\nEpoch {epoch + 1}/{training_config.num_epochs}")
         
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, scheduler, 
-                                training_config.device, training_config)
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            scheduler,
+            training_config.device,
+            training_config,
+            scaler
+        )
         
         # Validate
-        val_metrics = evaluate_model(model, val_loader, task_config, training_config.device)
+        val_metrics = evaluate_model(
+            model,
+            val_loader,
+            task_config,
+            training_config.device,
+            use_amp=training_config.fp16
+        )
         
         logger.info(f"Train Loss: {train_loss:.4f}")
         logger.info(f"Val Loss: {val_metrics['loss']:.4f}")
@@ -623,7 +659,13 @@ def main():
         extra_layer_type='cnn',
         cnn_kernel_sizes=args.cnn_kernel_sizes,
         cnn_num_filters=args.cnn_num_filters
-    ).to(device)
+    )
+
+    if torch.cuda.device_count() > 1:
+        logger.info(f"Using {torch.cuda.device_count()} GPUs")
+        model = torch.nn.DataParallel(model)
+
+    model = model.to(device)
     
     num_params = sum(p.numel() for p in model.parameters())
     logger.info(f"  Total parameters: {num_params:,}")
@@ -653,10 +695,19 @@ def main():
     test_loader = DataLoader(
         test_dataset,
         batch_size=training_config.batch_size,
-        shuffle=False
+        shuffle=False,
+        num_workers=training_config.num_workers,
+        pin_memory=training_config.pin_memory,
+        persistent_workers=training_config.persistent_workers
     )
     
-    test_metrics = evaluate_model(model, test_loader, task_config, device)
+    test_metrics = evaluate_model(
+        model,
+        test_loader,
+        task_config,
+        device,
+        use_amp=training_config.fp16
+    )
     
     logger.info(f"\nTest Loss: {test_metrics['loss']:.4f}")
     logger.info(f"Test Precision: {test_metrics['precision']:.4f}")

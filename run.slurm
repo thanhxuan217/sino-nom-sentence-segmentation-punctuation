@@ -33,10 +33,9 @@ cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 
 echo "=========================================="
 echo "Multi-GPU Training Job"
-GPUS_PER_NODE=${SLURM_GPUS_ON_NODE:-${SLURM_GPUS_PER_NODE:-1}}
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
-echo "Number of GPUs: $GPUS_PER_NODE"
+echo "Number of GPUs: ${SLURM_GPUS_ON_NODE:-${SLURM_GPUS_PER_NODE:-1}}"
 echo "Start Time: $(date)"
 echo "=========================================="
 
@@ -60,8 +59,6 @@ fi
 
 # Set environment variables
 export PYTHONUNBUFFERED=1
-export MASTER_PORT=29500
-export MASTER_ADDR=$(hostname -s)
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
 # ============================================================================
@@ -107,10 +104,7 @@ echo ""
 # RUN TRAINING
 # ============================================================================
 
-torchrun \
-    --nproc_per_node=$GPUS_PER_NODE \
-    --master_port=$MASTER_PORT \
-    train.py \
+python train.py \
     --task $TASK \
     --train_path $TRAIN_PATH \
     --val_path $VAL_PATH \
