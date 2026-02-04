@@ -310,6 +310,170 @@ def create_dataloaders(
     return train_loader, val_loader
 
 
+def apply_punctuation_labels(text: str, labels: List[str]) -> str:
+    """Apply punctuation labels to text
+    
+    Args:
+        text: Original text string
+        labels: List of labels ('O' or punctuation marks)
+    
+    Returns:
+        Text with punctuation inserted after characters
+    """
+    output = []
+    for ch, label in zip(text, labels):
+        output.append(ch)
+        if label != "O":
+            output.append(label)
+    return "".join(output)
+
+
+def apply_segmentation_inline(text: str, labels: List[str], sep: str = " | ") -> str:
+    """Apply segmentation labels to text
+    
+    Args:
+        text: Original text string
+        labels: List of BMES labels
+        sep: Separator to use between segments
+    
+    Returns:
+        Text with separators between segments
+    """
+    output = []
+    for ch, label in zip(text, labels):
+        output.append(ch)
+        if label in ("E", "S"):
+            output.append(sep)
+    return "".join(output).rstrip(sep)
+
+
+def predict_labels(
+    model,
+    text: str,
+    tokenizer,
+    config: TaskConfig,
+    device: str,
+    max_length: int = 256
+) -> List[str]:
+    """Predict labels for a single text
+    
+    Args:
+        model: The trained model
+        text: Input text string
+        tokenizer: The tokenizer
+        config: Task configuration
+        device: Device to run on
+        max_length: Maximum sequence length
+    
+    Returns:
+        List of predicted labels for each character
+    """
+    model.eval()
+    chars = list(text)
+    
+    tokenized = tokenizer(
+        chars,
+        is_split_into_words=True,
+        return_tensors="pt",
+        max_length=max_length,
+        truncation=True
+    )
+    
+    input_ids = tokenized["input_ids"].to(device)
+    attention_mask = tokenized["attention_mask"].to(device)
+    
+    with torch.no_grad():
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        preds = torch.argmax(outputs["logits"], dim=-1)[0]
+    
+    word_ids = tokenized.word_ids()
+    pred_labels = []
+    
+    for idx, word_id in enumerate(word_ids):
+        if word_id is not None:
+            label_id = preds[idx].item()
+            pred_labels.append(config.id2label[label_id])
+    
+    return pred_labels
+
+
+def run_test_set(
+    model,
+    tokenizer,
+    config: TaskConfig,
+    device: str,
+    test_texts: List[str],
+    test_labels: List[List[str]],
+    output_path: str,
+    max_length: int = 256,
+    logger=None
+):
+    """Run predictions on test set and save results with actual text
+    
+    Args:
+        model: The trained model
+        tokenizer: The tokenizer
+        config: Task configuration
+        device: Device to run on
+        test_texts: List of test texts
+        test_labels: List of ground truth labels
+        output_path: Path to save results JSON
+        max_length: Maximum sequence length
+        logger: Logger instance
+    """
+    results = []
+    
+    for i, (text, gold_labels) in enumerate(tqdm(zip(test_texts, test_labels), 
+                                                   total=len(test_texts),
+                                                   desc="Running predictions")):
+        pred_labels = predict_labels(
+            model=model,
+            text=text,
+            tokenizer=tokenizer,
+            config=config,
+            device=device,
+            max_length=max_length
+        )
+        
+        # Apply labels to get formatted text
+        if config.task_name == "punctuation":
+            gold_text = apply_punctuation_labels(text, gold_labels)
+            pred_text = apply_punctuation_labels(text, pred_labels)
+        elif config.task_name == "segmentation":
+            gold_text = apply_segmentation_inline(text, gold_labels)
+            pred_text = apply_segmentation_inline(text, pred_labels)
+        else:
+            gold_text = text
+            pred_text = text
+        
+        results.append({
+            "text": text,
+            "gold_labels": gold_labels,
+            "pred_labels": pred_labels,
+            "gold_text_labeled": gold_text,
+            "pred_text_labeled": pred_text,
+        })
+    
+    # Save results
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    
+    if logger:
+        logger.info(f"✓ Predictions saved to: {output_path}")
+        logger.info(f"  Total samples: {len(results)}")
+        
+        # Show a few examples
+        logger.info("\n" + "="*70)
+        logger.info("SAMPLE PREDICTIONS")
+        logger.info("="*70)
+        for idx in range(min(3, len(results))):
+            sample = results[idx]
+            logger.info(f"\n--- Sample {idx + 1} ---")
+            logger.info(f"Original:  {sample['text'][:100]}...")
+            logger.info(f"Gold:      {sample['gold_text_labeled'][:100]}...")
+            logger.info(f"Predicted: {sample['pred_text_labeled'][:100]}...")
+
+
 def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False):
     """Evaluate model on a dataset"""
     model.eval()
@@ -375,7 +539,7 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
     }
 
 
-def train_epoch(model, train_loader, optimizer, scheduler, device, config, scaler=None):
+def train_epoch(model, train_loader, optimizer, scheduler, device, config, logger, epoch, scaler=None):
     """Train for one epoch"""
     model.train()
     total_loss = 0.0
@@ -421,6 +585,12 @@ def train_epoch(model, train_loader, optimizer, scheduler, device, config, scale
         step_loss = loss.item() * (config.gradient_accumulation_steps if config.gradient_accumulation_steps > 1 else 1)
         total_loss += step_loss
         progress_bar.set_postfix({'loss': f'{step_loss:.4f}'})
+        
+        # Log loss for each step
+        logger.info(
+            "Epoch %d | Step %d/%d | Loss %.4f",
+            epoch, step + 1, len(train_loader), step_loss
+        )
     
     return total_loss / len(train_loader)
 
@@ -472,6 +642,8 @@ def train_with_early_stopping(
             scheduler,
             training_config.device,
             training_config,
+            logger,
+            epoch + 1,
             scaler
         )
         
@@ -747,6 +919,24 @@ def main():
     logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
     logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
     logger.info(f"Test F1: {test_metrics['f1']:.4f}")
+    
+    # Run predictions on test set and save actual text results
+    logger.info("\n" + "="*70)
+    logger.info("RUNNING PREDICTIONS ON TEST SET")
+    logger.info("="*70)
+    
+    predictions_path = os.path.join(args.output_dir, f"{args.task}_predictions.json")
+    run_test_set(
+        model=model,
+        tokenizer=tokenizer,
+        config=task_config,
+        device=device,
+        test_texts=test_texts,
+        test_labels=test_labels,
+        output_path=predictions_path,
+        max_length=training_config.max_length,
+        logger=logger
+    )
     
     # Save results
     results = {
