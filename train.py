@@ -18,7 +18,10 @@ from typing import List, Dict, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoModel, AutoTokenizer
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
@@ -245,6 +248,27 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def setup_ddp(rank: int, world_size: int):
+    """Initialize distributed process group"""
+    os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', 'localhost')
+    os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29500')
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
+
+
+def cleanup_ddp():
+    """Clean up distributed process group"""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def is_main_process():
+    """Check if current process is the main process (rank 0)"""
+    if not dist.is_initialized():
+        return True
+    return dist.get_rank() == 0
+
+
 def load_data(json_path: str) -> Tuple[List[str], List[List[str]]]:
     texts = []
     labels = []
@@ -279,7 +303,8 @@ def create_dataloaders(
     val_labels: List[List[str]],
     tokenizer,
     config: TaskConfig,
-    training_config: TrainingConfig
+    training_config: TrainingConfig,
+    use_ddp: bool = False
 ) -> Tuple[DataLoader, DataLoader]:
     """Create train and validation dataloaders"""
     
@@ -290,24 +315,33 @@ def create_dataloaders(
         val_texts, val_labels, tokenizer, config, training_config.max_length
     )
     
+    # Use DistributedSampler for DDP
+    train_sampler = DistributedSampler(train_dataset) if use_ddp else None
+    val_sampler = DistributedSampler(val_dataset, shuffle=False) if use_ddp else None
+    
+    # persistent_workers only works with num_workers > 0
+    use_persistent = training_config.persistent_workers and training_config.num_workers > 0
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=training_config.batch_size,
-        shuffle=True,
+        shuffle=(train_sampler is None),  # Don't shuffle if using sampler
+        sampler=train_sampler,
         num_workers=training_config.num_workers,
         pin_memory=training_config.pin_memory,
-        persistent_workers=training_config.persistent_workers
+        persistent_workers=use_persistent
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=training_config.batch_size,
         shuffle=False,
+        sampler=val_sampler,
         num_workers=training_config.num_workers,
         pin_memory=training_config.pin_memory,
-        persistent_workers=training_config.persistent_workers
+        persistent_workers=use_persistent
     )
     
-    return train_loader, val_loader
+    return train_loader, val_loader, train_sampler
 
 
 def apply_punctuation_labels(text: str, labels: List[str]) -> str:
@@ -488,7 +522,7 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
             
-            with torch.cuda.amp.autocast(enabled=use_amp and torch.cuda.is_available()):
+            with torch.amp.autocast('cuda', enabled=use_amp and torch.cuda.is_available()):
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 
             loss = outputs['loss']
@@ -552,7 +586,7 @@ def train_epoch(model, train_loader, optimizer, scheduler, device, config, logge
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
         
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast('cuda', enabled=use_amp):
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
             loss = outputs['loss']
 
@@ -602,7 +636,8 @@ def train_with_early_stopping(
     task_config,
     training_config,
     logger,
-    save_path
+    save_path,
+    train_sampler=None
 ):
     """Train model with early stopping"""
     
@@ -611,7 +646,7 @@ def train_with_early_stopping(
         lr=training_config.learning_rate,
         weight_decay=training_config.weight_decay
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=training_config.fp16 and torch.cuda.is_available())
+    scaler = torch.amp.GradScaler('cuda', enabled=training_config.fp16 and torch.cuda.is_available())
     
     steps_per_epoch = math.ceil(len(train_loader) / training_config.gradient_accumulation_steps)
     num_training_steps = steps_per_epoch * training_config.num_epochs
@@ -627,12 +662,18 @@ def train_with_early_stopping(
     best_val_f1 = 0.0
     patience_counter = 0
     
-    logger.info("\n" + "="*70)
-    logger.info("TRAINING START")
-    logger.info("="*70)
+    if is_main_process():
+        logger.info("\n" + "="*70)
+        logger.info("TRAINING START")
+        logger.info("="*70)
     
     for epoch in range(training_config.num_epochs):
-        logger.info(f"\nEpoch {epoch + 1}/{training_config.num_epochs}")
+        # Set epoch for DistributedSampler (important for proper shuffling)
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+        
+        if is_main_process():
+            logger.info(f"\nEpoch {epoch + 1}/{training_config.num_epochs}")
         
         # Train
         train_loss = train_epoch(
@@ -656,29 +697,36 @@ def train_with_early_stopping(
             use_amp=training_config.fp16
         )
         
-        logger.info(f"Train Loss: {train_loss:.4f}")
-        logger.info(f"Val Loss: {val_metrics['loss']:.4f}")
-        logger.info(f"Val Precision: {val_metrics['precision']:.4f}")
-        logger.info(f"Val Recall: {val_metrics['recall']:.4f}")
-        logger.info(f"Val F1: {val_metrics['f1']:.4f}")
+        if is_main_process():
+            logger.info(f"Train Loss: {train_loss:.4f}")
+            logger.info(f"Val Loss: {val_metrics['loss']:.4f}")
+            logger.info(f"Val Precision: {val_metrics['precision']:.4f}")
+            logger.info(f"Val Recall: {val_metrics['recall']:.4f}")
+            logger.info(f"Val F1: {val_metrics['f1']:.4f}")
         
-        # Early stopping
+        # Early stopping (only main process makes decisions, but all processes follow)
         if val_metrics['f1'] > best_val_f1:
             best_val_f1 = val_metrics['f1']
-            torch.save(model.state_dict(), save_path)
-            logger.info(f"✓ New best F1: {best_val_f1:.4f} - Model saved!")
+            # Save model state - for DDP, save the underlying module
+            if is_main_process():
+                state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
+                torch.save(state_dict, save_path)
+                logger.info(f"✓ New best F1: {best_val_f1:.4f} - Model saved!")
             patience_counter = 0
         else:
             patience_counter += 1
-            logger.info(f"Patience: {patience_counter}/{training_config.early_stopping_patience}")
+            if is_main_process():
+                logger.info(f"Patience: {patience_counter}/{training_config.early_stopping_patience}")
             
             if patience_counter >= training_config.early_stopping_patience:
-                logger.info(f"\n⚠ Early stopping triggered!")
+                if is_main_process():
+                    logger.info(f"\n⚠ Early stopping triggered!")
                 break
     
-    logger.info("\n" + "="*70)
-    logger.info(f"Training complete! Best Val F1: {best_val_f1:.4f}")
-    logger.info("="*70)
+    if is_main_process():
+        logger.info("\n" + "="*70)
+        logger.info(f"Training complete! Best Val F1: {best_val_f1:.4f}")
+        logger.info("="*70)
     
     return best_val_f1
 
@@ -761,40 +809,70 @@ def main():
     
     args = parser.parse_args()
     
-    # Create output directories
-    os.makedirs(args.output_dir, exist_ok=True)
-    os.makedirs(args.model_save_dir, exist_ok=True)
-    os.makedirs(args.log_dir, exist_ok=True)
+    # Setup DDP if available FIRST (torchrun sets these environment variables)
+    use_ddp = 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
     
-    # Setup logging
+    if use_ddp:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+        setup_ddp(rank, world_size)
+        device = f"cuda:{local_rank}"
+        torch.cuda.set_device(local_rank)
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        local_rank = 0
+    
+    # Create output directories (only main process to avoid race conditions)
+    if is_main_process():
+        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.model_save_dir, exist_ok=True)
+        os.makedirs(args.log_dir, exist_ok=True)
+    
+    # Wait for main process to create directories
+    if use_ddp:
+        dist.barrier()
+    
+    # Setup logging - only main process writes to file
     log_file = os.path.join(args.log_dir, f"train_{args.task}.log")
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, mode="w", encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
-        force=True
-    )
+    if is_main_process():
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s | %(message)s",
+            handlers=[
+                logging.FileHandler(log_file, mode="w", encoding="utf-8"),
+                logging.StreamHandler(sys.stdout),
+            ],
+            force=True
+        )
+    else:
+        # Non-main processes: minimal logging (only warnings/errors)
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="%(asctime)s | [Rank %(process)d] %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+            force=True
+        )
     logger = logging.getLogger(__name__)
     
-    # Log arguments
-    logger.info("="*70)
-    logger.info("TRAINING CONFIGURATION")
-    logger.info("="*70)
-    for arg, value in vars(args).items():
-        logger.info(f"{arg}: {value}")
-    logger.info("="*70)
+    # Log arguments (only from main process)
+    if is_main_process():
+        logger.info("="*70)
+        logger.info("TRAINING CONFIGURATION")
+        logger.info("="*70)
+        for arg, value in vars(args).items():
+            logger.info(f"{arg}: {value}")
+        logger.info("="*70)
     
     # Set seed
     set_seed(args.seed)
     
-    # Setup device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"\n✓ Device: {device}")
-    if torch.cuda.is_available():
-        logger.info(f"  GPU: {torch.cuda.get_device_name(0)}")
+    if is_main_process():
+        logger.info(f"\n✓ Device: {device}")
+        if use_ddp:
+            logger.info(f"  Using DDP with {int(os.environ.get('WORLD_SIZE', 1))} GPUs")
+        if torch.cuda.is_available():
+            logger.info(f"  GPU: {torch.cuda.get_device_name(local_rank)}")
     
     # Task configuration
     if args.task == "punctuation":
@@ -810,9 +888,10 @@ def main():
             ignore_labels=[]
         )
     
-    logger.info(f"\n✓ Task: {task_config.task_name}")
-    logger.info(f"  Labels: {task_config.labels}")
-    logger.info(f"  Num labels: {task_config.num_labels}")
+    if is_main_process():
+        logger.info(f"\n✓ Task: {task_config.task_name}")
+        logger.info(f"  Labels: {task_config.labels}")
+        logger.info(f"  Num labels: {task_config.num_labels}")
     
     # Training configuration
     training_config = TrainingConfig(
@@ -836,27 +915,33 @@ def main():
     )
     
     # Load tokenizer
-    logger.info("\n✓ Loading tokenizer...")
+    if is_main_process():
+        logger.info("\n✓ Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     
     # Load data
-    logger.info("✓ Loading data...")
+    if is_main_process():
+        logger.info("✓ Loading data...")
     train_texts, train_labels = load_data(args.train_path)
     val_texts, val_labels = load_data(args.val_path)
     
-    logger.info(f"  Train samples: {len(train_texts)}")
-    logger.info(f"  Val samples: {len(val_texts)}")
+    if is_main_process():
+        logger.info(f"  Train samples: {len(train_texts)}")
+        logger.info(f"  Val samples: {len(val_texts)}")
     
     # Create dataloaders
-    logger.info("✓ Creating dataloaders...")
-    train_loader, val_loader = create_dataloaders(
+    if is_main_process():
+        logger.info("✓ Creating dataloaders...")
+    train_loader, val_loader, train_sampler = create_dataloaders(
         train_texts, train_labels,
         val_texts, val_labels,
-        tokenizer, task_config, training_config
+        tokenizer, task_config, training_config,
+        use_ddp=use_ddp
     )
     
     # Create model
-    logger.info("✓ Creating model...")
+    if is_main_process():
+        logger.info("✓ Creating model...")
     model = SikuBERTForTokenClassification(
         model_name=args.model_name,
         num_labels=task_config.num_labels,
@@ -867,92 +952,114 @@ def main():
         cnn_num_filters=args.cnn_num_filters
     )
 
-    if torch.cuda.device_count() > 1:
-        logger.info(f"Using {torch.cuda.device_count()} GPUs")
-        model = torch.nn.DataParallel(model)
-
     model = model.to(device)
     
+    # Wrap model with DDP
+    if use_ddp:
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        if is_main_process():
+            logger.info(f"  Model wrapped with DistributedDataParallel")
+    
     num_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"  Total parameters: {num_params:,}")
+    if is_main_process():
+        logger.info(f"  Total parameters: {num_params:,}")
     
     # Train
     save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_cnn.pt")
     best_val_f1 = train_with_early_stopping(
         model, train_loader, val_loader,
         task_config, training_config,
-        logger, save_path
+        logger, save_path,
+        train_sampler=train_sampler
     )
     
-    # Evaluate on test set
-    logger.info("\n" + "="*70)
-    logger.info("TEST SET EVALUATION")
-    logger.info("="*70)
+    # Evaluate on test set (only on main process)
+    if is_main_process():
+        logger.info("\n" + "="*70)
+        logger.info("TEST SET EVALUATION")
+        logger.info("="*70)
+        
+        # Create a fresh model for evaluation (without DDP wrapper)
+        eval_model = SikuBERTForTokenClassification(
+            model_name=args.model_name,
+            num_labels=task_config.num_labels,
+            dropout=args.dropout,
+            use_extra_layer=True,
+            extra_layer_type='cnn',
+            cnn_kernel_sizes=args.cnn_kernel_sizes,
+            cnn_num_filters=args.cnn_num_filters
+        )
+        eval_model.load_state_dict(torch.load(save_path, weights_only=True))
+        eval_model = eval_model.to(device)
+        eval_model.eval()
+        
+        test_texts, test_labels = load_data(args.test_path)
+        logger.info(f"Test samples: {len(test_texts)}")
+        
+        # persistent_workers only works with num_workers > 0
+        use_persistent = training_config.persistent_workers and training_config.num_workers > 0
+        
+        test_dataset = ClassicalChineseDataset(
+            test_texts, test_labels, tokenizer, task_config, training_config.max_length
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=training_config.batch_size,
+            shuffle=False,
+            num_workers=training_config.num_workers,
+            pin_memory=training_config.pin_memory,
+            persistent_workers=use_persistent
+        )
+        
+        test_metrics = evaluate_model(
+            eval_model,
+            test_loader,
+            task_config,
+            device,
+            use_amp=training_config.fp16
+        )
+        
+        logger.info(f"\nTest Loss: {test_metrics['loss']:.4f}")
+        logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
+        logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
+        logger.info(f"Test F1: {test_metrics['f1']:.4f}")
+        
+        # Run predictions on test set and save actual text results
+        logger.info("\n" + "="*70)
+        logger.info("RUNNING PREDICTIONS ON TEST SET")
+        logger.info("="*70)
+        
+        predictions_path = os.path.join(args.output_dir, f"{args.task}_predictions.json")
+        run_test_set(
+            model=eval_model,
+            tokenizer=tokenizer,
+            config=task_config,
+            device=device,
+            test_texts=test_texts,
+            test_labels=test_labels,
+            output_path=predictions_path,
+            max_length=training_config.max_length,
+            logger=logger
+        )
+        
+        # Save results
+        results = {
+            'task': args.task,
+            'test_metrics': test_metrics,
+            'config': vars(args)
+        }
+        
+        results_path = os.path.join(args.output_dir, f"{args.task}_results.json")
+        with open(results_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"\n✓ Results saved to: {results_path}")
+        logger.info("="*70)
+        logger.info("🎉 TRAINING COMPLETE!")
+        logger.info("="*70)
     
-    model.load_state_dict(torch.load(save_path))
-    model.eval()
-    
-    test_texts, test_labels = load_data(args.test_path)
-    logger.info(f"Test samples: {len(test_texts)}")
-    
-    test_dataset = ClassicalChineseDataset(
-        test_texts, test_labels, tokenizer, task_config, training_config.max_length
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=training_config.batch_size,
-        shuffle=False,
-        num_workers=training_config.num_workers,
-        pin_memory=training_config.pin_memory,
-        persistent_workers=training_config.persistent_workers
-    )
-    
-    test_metrics = evaluate_model(
-        model,
-        test_loader,
-        task_config,
-        device,
-        use_amp=training_config.fp16
-    )
-    
-    logger.info(f"\nTest Loss: {test_metrics['loss']:.4f}")
-    logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
-    logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
-    logger.info(f"Test F1: {test_metrics['f1']:.4f}")
-    
-    # Run predictions on test set and save actual text results
-    logger.info("\n" + "="*70)
-    logger.info("RUNNING PREDICTIONS ON TEST SET")
-    logger.info("="*70)
-    
-    predictions_path = os.path.join(args.output_dir, f"{args.task}_predictions.json")
-    run_test_set(
-        model=model,
-        tokenizer=tokenizer,
-        config=task_config,
-        device=device,
-        test_texts=test_texts,
-        test_labels=test_labels,
-        output_path=predictions_path,
-        max_length=training_config.max_length,
-        logger=logger
-    )
-    
-    # Save results
-    results = {
-        'task': args.task,
-        'test_metrics': test_metrics,
-        'config': vars(args)
-    }
-    
-    results_path = os.path.join(args.output_dir, f"{args.task}_results.json")
-    with open(results_path, 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    
-    logger.info(f"\n✓ Results saved to: {results_path}")
-    logger.info("="*70)
-    logger.info("🎉 TRAINING COMPLETE!")
-    logger.info("="*70)
+    # Cleanup DDP
+    cleanup_ddp()
 
 
 if __name__ == "__main__":

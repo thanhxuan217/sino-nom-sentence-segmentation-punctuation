@@ -44,7 +44,7 @@ export NUM_WORKERS=4
 export FP16="--fp16"
 # Pin memory for faster GPU transfer
 export PIN_MEMORY="--pin_memory"
-# Persistent workers (keeps workers alive between epochs, faster but uses more memory)
+# Persistent workers - keeps workers alive between epochs (only works when num_workers > 0)
 export PERSISTENT_WORKERS="--persistent_workers"
 
 # ============================================================================

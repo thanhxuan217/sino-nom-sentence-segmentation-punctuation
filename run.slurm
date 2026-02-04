@@ -107,7 +107,10 @@ echo ""
 # RUN TRAINING
 # ============================================================================
 
-python train.py \
+# Get number of GPUs from SLURM
+NGPUS=${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L | wc -l)}
+
+torchrun --nproc_per_node=$NGPUS train.py \
     --task $TASK \
     --train_path $TRAIN_PATH \
     --val_path $VAL_PATH \
@@ -124,6 +127,10 @@ python train.py \
     --gradient_accumulation_steps $GRADIENT_ACCUMULATION_STEPS \
     --early_stopping_patience $EARLY_STOPPING_PATIENCE \
     --seed $SEED \
+    --num_workers $NUM_WORKERS \
+    $FP16 \
+    $PIN_MEMORY \
+    $PERSISTENT_WORKERS \
     --cnn_kernel_sizes $CNN_KERNEL_SIZES \
     --cnn_num_filters $CNN_NUM_FILTERS \
     --output_dir $OUTPUT_DIR \
