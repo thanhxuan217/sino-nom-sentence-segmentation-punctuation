@@ -22,9 +22,15 @@ export MODEL_NAME="SIKU-BERT/sikubert"
 export MAX_LENGTH=256
 
 # ============================================================================
+# DISTRIBUTED TRAINING (Multi-GPU)
+# ============================================================================
+export NGPUS=2
+export MASTER_PORT=29500
+
+# ============================================================================
 # TRAINING HYPERPARAMETERS
 # ============================================================================
-export BATCH_SIZE=128
+export BATCH_SIZE=64
 export LEARNING_RATE=2e-5
 export NUM_EPOCHS=5
 export WARMUP_RATIO=0.1

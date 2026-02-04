@@ -6,7 +6,7 @@
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
-#SBATCH --gres=gpu:4                      # Number of GPUs (change as needed)
+#SBATCH --gres=gpu:2                      # Number of GPUs (change as needed)
 #SBATCH --mem=128G                        # Memory per node
 #SBATCH --time=72:00:00                   # Time limit (HH:MM:SS)
 #SBATCH --mail-type=BEGIN,END,FAIL        # Email notifications
