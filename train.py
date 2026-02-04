@@ -184,7 +184,12 @@ class SikuBERTForTokenClassification(nn.Module):
         super().__init__()
         
         # Backbone: SikuBERT
-        self.bert = AutoModel.from_pretrained(model_name)
+        self.bert = AutoModel.from_pretrained(
+            model_name,
+            use_safetensors=True,
+            add_pooling_layer=False
+        )
+
         self.hidden_size = self.bert.config.hidden_size
         
         # Dropout
