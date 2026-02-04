@@ -28,10 +28,10 @@ echo "Checking Python version..."
 python_version=$(python3 --version 2>&1 | awk '{print $2}')
 echo "Python version: $python_version"
 
-if python3 -c "import sys; exit(0 if sys.version_info >= (3, 8) else 1)"; then
+if python3 -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)"; then
     echo -e "${GREEN}✓ Python version is compatible${NC}"
 else
-    echo -e "${YELLOW}⚠ Warning: Python 3.8+ recommended${NC}"
+    echo -e "${YELLOW}⚠ Warning: Python 3.11+ required (for scikit-learn>=1.8.0)${NC}"
 fi
 echo ""
 

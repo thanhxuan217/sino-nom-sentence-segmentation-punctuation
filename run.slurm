@@ -43,7 +43,7 @@ echo "Start Time: $(date)"
 echo "=========================================="
 
 # Load required modules (adjust based on your cluster)
-# module load python/3.10
+# module load python/3.11
 # module load cuda/11.8
 # module load cudnn/8.6
 

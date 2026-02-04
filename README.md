@@ -22,7 +22,7 @@ First, ensure you have the required dependencies installed:
 pip install -r requirements.txt
 
 # Option 2: Using conda
-conda create -n sikubert python=3.10
+conda create -n sikubert python=3.11
 conda activate sikubert
 pip install -r requirements.txt
 ```
