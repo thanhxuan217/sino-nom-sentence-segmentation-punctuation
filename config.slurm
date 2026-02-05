@@ -30,9 +30,9 @@ export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datase
 # ============================================================================
 # Data is stored on /raid of the specific GPU node for faster I/O
 # Make sure to copy your data to the GPU node first!
-export TRAIN_PATH="${DATA_DIR}/segmentation_train.jsonl"
-export VAL_PATH="${DATA_DIR}/segmentation_val.jsonl"
-export TEST_PATH="${DATA_DIR}/segmentation_test.jsonl"
+export TRAIN_PATH="${DATA_DIR}/train/segmentation_sliding_part_0.jsonl"
+export VAL_PATH="${DATA_DIR}/val/segmentation_sliding_val.jsonl"
+export TEST_PATH="${DATA_DIR}/test/segmentation_sliding_test.jsonl"
 
 # ============================================================================
 # TASK CONFIGURATION
