@@ -116,8 +116,8 @@ echo ""
 # RUN TRAINING
 # ============================================================================
 
-# Get number of GPUs from SLURM
-NGPUS=${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L | wc -l)}
+# Number of GPUs - hardcoded to 2 (max allowed per server rules)
+NGPUS=2
 
 torchrun --nproc_per_node=$NGPUS train.py \
     --task $TASK \
