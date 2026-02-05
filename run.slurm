@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=logs/slurm_%j.out        # Output file (%j = job ID)
-#SBATCH --error=logs/slurm_%j.err         # Error file
+#SBATCH --output=/media02/ddien02/thanhxuan217/logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=/media02/ddien02/thanhxuan217/logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=gpu                   # Partition name (change as needed)
 #SBATCH --nodelist=gpu01                  # Specific GPU node (must match where data is stored on /raid!)
 #SBATCH --nodes=1                         # Number of nodes
@@ -26,7 +26,13 @@ fi
 
 source config.slurm
 
+# Set output/error files using absolute paths from config
+# Note: SLURM doesn't support variables in #SBATCH directives, so we set them here
+# and redirect manually if needed, or rely on SLURM_SUBMIT_DIR
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+
+# Ensure log directory exists
+mkdir -p "${LOG_DIR}"
 
 # ============================================================================
 # SETUP ENVIRONMENT
