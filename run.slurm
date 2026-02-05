@@ -2,8 +2,8 @@
 #SBATCH --job-name=sikubert_cnn           # Job name
 #SBATCH --output=/media02/ddien02/thanhxuan217/logs/slurm_%j.out  # Output file (absolute path)
 #SBATCH --error=/media02/ddien02/thanhxuan217/logs/slurm_%j.err   # Error file (absolute path)
-#SBATCH --partition=gpu                   # Partition name (change as needed)
-#SBATCH --nodelist=gpu01                  # Specific GPU node (must match where data is stored on /raid!)
+#SBATCH --partition=batch                 # Partition name
+#SBATCH --nodelist=gpu04                  # GPU node (idle) - must match where data is stored on /raid!
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
@@ -119,6 +119,13 @@ echo ""
 # Number of GPUs - hardcoded to 2 (max allowed per server rules)
 NGPUS=2
 
+# Build checkpoint argument if path is set
+CHECKPOINT_ARG=""
+if [[ -n "$CHECKPOINT_PATH" && -f "$CHECKPOINT_PATH" ]]; then
+    CHECKPOINT_ARG="--resume_from_checkpoint $CHECKPOINT_PATH"
+    echo "Resuming from checkpoint: $CHECKPOINT_PATH"
+fi
+
 torchrun --nproc_per_node=$NGPUS train.py \
     --task $TASK \
     --train_path $TRAIN_PATH \
@@ -144,7 +151,8 @@ torchrun --nproc_per_node=$NGPUS train.py \
     --cnn_num_filters $CNN_NUM_FILTERS \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
-    --log_dir $LOG_DIR
+    --log_dir $LOG_DIR \
+    $CHECKPOINT_ARG
 
 # ============================================================================
 # COMPLETION

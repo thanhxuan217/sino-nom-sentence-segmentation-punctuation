@@ -812,6 +812,10 @@ def main():
     parser.add_argument('--log_dir', type=str, default='logs',
                        help='Log directory')
     
+    # Resume from checkpoint (for multi-phase training)
+    parser.add_argument('--resume_from_checkpoint', type=str, default='',
+                       help='Path to checkpoint to resume training from')
+    
     args = parser.parse_args()
     
     # Setup DDP if available FIRST (torchrun sets these environment variables)
@@ -956,6 +960,12 @@ def main():
         cnn_kernel_sizes=args.cnn_kernel_sizes,
         cnn_num_filters=args.cnn_num_filters
     )
+    
+    # Load checkpoint if resuming
+    if args.resume_from_checkpoint and os.path.exists(args.resume_from_checkpoint):
+        if is_main_process():
+            logger.info(f"\n✓ Resuming from checkpoint: {args.resume_from_checkpoint}")
+        model.load_state_dict(torch.load(args.resume_from_checkpoint, weights_only=True))
 
     model = model.to(device)
     
@@ -969,8 +979,10 @@ def main():
     if is_main_process():
         logger.info(f"  Total parameters: {num_params:,}")
     
-    # Train
+    # Extract train file name for checkpoint naming
+    train_file_name = os.path.splitext(os.path.basename(args.train_path))[0]
     save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_cnn.pt")
+    
     best_val_f1 = train_with_early_stopping(
         model, train_loader, val_loader,
         task_config, training_config,
@@ -978,89 +990,33 @@ def main():
         train_sampler=train_sampler
     )
     
-    # Evaluate on test set (only on main process)
+    # Save training info (for tracking multi-phase training)
     if is_main_process():
-        logger.info("\n" + "="*70)
-        logger.info("TEST SET EVALUATION")
-        logger.info("="*70)
-        
-        # Create a fresh model for evaluation (without DDP wrapper)
-        eval_model = SikuBERTForTokenClassification(
-            model_name=args.model_name,
-            num_labels=task_config.num_labels,
-            dropout=args.dropout,
-            use_extra_layer=True,
-            extra_layer_type='cnn',
-            cnn_kernel_sizes=args.cnn_kernel_sizes,
-            cnn_num_filters=args.cnn_num_filters
-        )
-        eval_model.load_state_dict(torch.load(save_path, weights_only=True))
-        eval_model = eval_model.to(device)
-        eval_model.eval()
-        
-        test_texts, test_labels = load_data(args.test_path)
-        logger.info(f"Test samples: {len(test_texts)}")
-        
-        # persistent_workers only works with num_workers > 0
-        use_persistent = training_config.persistent_workers and training_config.num_workers > 0
-        
-        test_dataset = ClassicalChineseDataset(
-            test_texts, test_labels, tokenizer, task_config, training_config.max_length
-        )
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=training_config.batch_size,
-            shuffle=False,
-            num_workers=training_config.num_workers,
-            pin_memory=training_config.pin_memory,
-            persistent_workers=use_persistent
-        )
-        
-        test_metrics = evaluate_model(
-            eval_model,
-            test_loader,
-            task_config,
-            device,
-            use_amp=training_config.fp16
-        )
-        
-        logger.info(f"\nTest Loss: {test_metrics['loss']:.4f}")
-        logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
-        logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
-        logger.info(f"Test F1: {test_metrics['f1']:.4f}")
-        
-        # Run predictions on test set and save actual text results
-        logger.info("\n" + "="*70)
-        logger.info("RUNNING PREDICTIONS ON TEST SET")
-        logger.info("="*70)
-        
-        predictions_path = os.path.join(args.output_dir, f"{args.task}_predictions.json")
-        run_test_set(
-            model=eval_model,
-            tokenizer=tokenizer,
-            config=task_config,
-            device=device,
-            test_texts=test_texts,
-            test_labels=test_labels,
-            output_path=predictions_path,
-            max_length=training_config.max_length,
-            logger=logger
-        )
-        
-        # Save results
-        results = {
+        train_info = {
             'task': args.task,
-            'test_metrics': test_metrics,
+            'train_path': args.train_path,
+            'train_file': train_file_name,
+            'val_path': args.val_path,
+            'best_val_f1': best_val_f1,
+            'resumed_from': args.resume_from_checkpoint if args.resume_from_checkpoint else None,
+            'model_saved_to': save_path,
             'config': vars(args)
         }
         
-        results_path = os.path.join(args.output_dir, f"{args.task}_results.json")
-        with open(results_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+        train_info_path = os.path.join(args.output_dir, f"{args.task}_train_info_{train_file_name}.json")
+        with open(train_info_path, 'w', encoding='utf-8') as f:
+            json.dump(train_info, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"\n✓ Results saved to: {results_path}")
+        logger.info(f"\n✓ Training info saved to: {train_info_path}")
         logger.info("="*70)
         logger.info("🎉 TRAINING COMPLETE!")
+        logger.info(f"  Best Val F1: {best_val_f1:.4f}")
+        logger.info(f"  Model saved: {save_path}")
+        logger.info(f"  Train file: {train_file_name}")
+        logger.info("="*70)
+        logger.info("")
+        logger.info("To evaluate on test set, run:")
+        logger.info(f"  python evaluate.py --task {args.task} --model_path {save_path} --test_path <test_path>")
         logger.info("="*70)
     
     # Cleanup DDP

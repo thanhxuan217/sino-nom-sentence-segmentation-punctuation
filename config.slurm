@@ -21,8 +21,9 @@ export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 # GPU Node Configuration (for large datasets stored on /raid)
 # IMPORTANT: Change GPU_NODE to match the node where your data is stored!
 # Run 'sinfo -N' to see available nodes
-export GPU_NODE="gpu01"  # Example: gpu01, gpu02, etc.
+export GPU_NODE="gpu04"  # Available: gpu01, gpu02, gpu03, gpu04
 export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
+# export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
 
 # ============================================================================
 # DATA PATHS
@@ -89,3 +90,17 @@ export CNN_NUM_FILTERS=256
 export OUTPUT_DIR="${WORKING_DIR}/outputs"
 export MODEL_SAVE_DIR="${WORKING_DIR}/models"
 export LOG_DIR="${WORKING_DIR}/logs"
+
+# ============================================================================
+# EVALUATION CONFIGURATION
+# ============================================================================
+# Path to the trained model for evaluation
+export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/best_${TASK}_model_cnn.pt"
+
+# ============================================================================
+# MULTI-PHASE TRAINING (Resume from checkpoint)
+# ============================================================================
+# Set to empty string "" if starting fresh, or path to checkpoint to resume
+# Example: export CHECKPOINT_PATH="${MODEL_SAVE_DIR}/best_segmentation_model_cnn.pt"
+export CHECKPOINT_PATH=""
+
