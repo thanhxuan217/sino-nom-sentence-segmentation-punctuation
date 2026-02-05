@@ -2,12 +2,36 @@
 # This file can be sourced in the SLURM script for easier parameter management
 
 # ============================================================================
+# SERVER RULES REMINDER (IMPORTANT!)
+# ============================================================================
+# - Max 2 jobs per group at a time
+# - Max resources per job: 16 CPUs, 64GB RAM, 2 GPUs
+# - Max runtime: 48 hours (jobs will be killed after this)
+# - Save checkpoints regularly as jobs may be interrupted
+# - Data storage: /media02/ddien02 (for source code & environments)
+# - GPU node /raid can be used for training data (node-specific)
+# ============================================================================
+
+# ============================================================================
+# WORKING DIRECTORY & GPU NODE
+# ============================================================================
+export WORKING_DIR="/media02/ddien02/thanhxuan217"
+export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
+
+# GPU Node Configuration (for large datasets stored on /raid)
+# IMPORTANT: Change GPU_NODE to match the node where your data is stored!
+# Run 'sinfo -N' to see available nodes
+export GPU_NODE="gpu01"  # Example: gpu01, gpu02, etc.
+export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
+
+# ============================================================================
 # DATA PATHS
 # ============================================================================
-# IMPORTANT: Change these to your actual data locations
-export TRAIN_PATH="data/segmentation_train.jsonl"
-export VAL_PATH="data/segmentation_val.jsonl"
-export TEST_PATH="data/segmentation_test.jsonl"
+# Data is stored on /raid of the specific GPU node for faster I/O
+# Make sure to copy your data to the GPU node first!
+export TRAIN_PATH="${DATA_DIR}/segmentation_train.jsonl"
+export VAL_PATH="${DATA_DIR}/segmentation_val.jsonl"
+export TEST_PATH="${DATA_DIR}/segmentation_test.jsonl"
 
 # ============================================================================
 # TASK CONFIGURATION
@@ -62,6 +86,6 @@ export CNN_NUM_FILTERS=256
 # ============================================================================
 # OUTPUT DIRECTORIES
 # ============================================================================
-export OUTPUT_DIR="outputs"
-export MODEL_SAVE_DIR="models"
-export LOG_DIR="logs"
+export OUTPUT_DIR="${WORKING_DIR}/outputs"
+export MODEL_SAVE_DIR="${WORKING_DIR}/models"
+export LOG_DIR="${WORKING_DIR}/logs"

@@ -3,12 +3,13 @@
 #SBATCH --output=logs/slurm_%j.out        # Output file (%j = job ID)
 #SBATCH --error=logs/slurm_%j.err         # Error file
 #SBATCH --partition=gpu                   # Partition name (change as needed)
+#SBATCH --nodelist=gpu01                  # Specific GPU node (must match where data is stored on /raid!)
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
 #SBATCH --gres=gpu:2                      # Number of GPUs (change as needed)
-#SBATCH --mem=128G                        # Memory per node
-#SBATCH --time=72:00:00                   # Time limit (HH:MM:SS)
+#SBATCH --mem=64G                         # Memory per node (max 64GB per server rules)
+#SBATCH --time=48:00:00                   # Time limit (max 48h per server rules)
 #SBATCH --mail-type=BEGIN,END,FAIL        # Email notifications
 #SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
 
@@ -47,15 +48,17 @@ echo "=========================================="
 # module load cuda/11.8
 # module load cudnn/8.6
 
-# Activate conda environment (assumes it already exists)
+# Activate conda environment (using prefix path from config)
 if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
     source "$HOME/miniconda3/etc/profile.d/conda.sh"
 elif [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]]; then
     source "$HOME/anaconda3/etc/profile.d/conda.sh"
+elif [[ -f "/opt/conda/etc/profile.d/conda.sh" ]]; then
+    source "/opt/conda/etc/profile.d/conda.sh"
 fi
 
 if command -v conda >/dev/null 2>&1; then
-    conda activate sikubert
+    conda activate "$CONDA_ENV"
 else
     echo "WARNING: conda not found. Make sure your Python env is activated."
 fi

@@ -15,13 +15,84 @@ bash setup.slurm
 
 ### 2. Setup Environment
 
-First, ensure you have the required dependencies installed:
+#### For SLURM Server (Recommended)
+
+> ⚠️ **Server Rules:**
+> - Max 2 jobs per group at a time
+> - Max resources per job: 16 CPUs, 64GB RAM, 2 GPUs
+> - Max runtime: 48 hours
+> - Store source code & env in `/media02/ddien02/<username>/`
+> - Store large datasets on `/raid/` of GPU nodes
+
+**Step 1: Create your personal working directory:**
+```bash
+# Replace 'thanhxuan217' with your username
+export WORKING_DIR="/media02/ddien02/thanhxuan217"
+mkdir -p ${WORKING_DIR}/{envs,outputs,models,logs}
+```
+
+**Step 2: Create Conda environment with prefix:**
+```bash
+# Create conda environment in your working directory
+conda create --prefix ${WORKING_DIR}/envs/sikubert python=3.11 -y
+
+# Activate using the full path
+conda activate ${WORKING_DIR}/envs/sikubert
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+**Step 3: Copy source code:**
+```bash
+# Copy source code to your working directory
+cp -r ./* ${WORKING_DIR}/
+```
+
+**Step 4: Setup large dataset on GPU node's /raid:**
+
+> 💡 **Why /raid?** The `/raid` partition on each GPU node has several TB of fast local storage. 
+> This is ideal for large datasets, but the data is **only accessible from that specific node**.
+
+```bash
+# First, check available GPU nodes
+sinfo -N
+
+# SSH to the specific GPU node (or use srun)
+srun --nodelist=gpu01 --pty bash
+
+# Create your data directory on the node's /raid
+mkdir -p /raid/${USER}/data
+
+# Copy your large dataset (run this ON the GPU node or use scp)
+cp /path/to/your/data/*.jsonl /raid/${USER}/data/
+
+# Verify the data is there
+ls -la /raid/${USER}/data/
+
+# Exit the node
+exit
+```
+
+**Step 5: Configure your node in config files:**
+```bash
+# Edit config.slurm - set the GPU node name
+export GPU_NODE="gpu01"  # Must match where you stored the data!
+
+# Edit run.slurm - set the same node
+#SBATCH --nodelist=gpu01
+```
+
+> ⚠️ **IMPORTANT:** The `GPU_NODE` in `config.slurm` and `--nodelist` in `run.slurm` must 
+> match the node where you copied your data, otherwise the job won't find the files!
+
+#### For Local Development
 
 ```bash
 # Option 1: Using pip
 pip install -r requirements.txt
 
-# Option 2: Using conda
+# Option 2: Using conda (standard)
 conda create -n sikubert python=3.11
 conda activate sikubert
 pip install -r requirements.txt
@@ -68,6 +139,10 @@ export NUM_EPOCHS=5
 ### 5. Submit to SLURM
 
 ```bash
+# Navigate to your working directory first
+cd /media02/ddien02/thanhxuan217
+
+# Submit the job
 sbatch run.slurm
 ```
 
