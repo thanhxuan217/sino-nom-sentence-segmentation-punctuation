@@ -81,6 +81,8 @@ class TrainingConfig:
     num_workers: int = 4
     pin_memory: bool = True
     persistent_workers: bool = True
+    head_type: str = "cnn"
+    output_dir: str = "outputs"
 
 
 # ============================================================================
@@ -746,6 +748,7 @@ def train_with_early_stopping(
     
     best_val_f1 = 0.0
     patience_counter = 0
+    history = []
     
     if is_main_process():
         logger.info("\n" + "="*70)
@@ -802,6 +805,24 @@ def train_with_early_stopping(
                     metrics['f1'],
                     metrics['support']
                 ))
+        
+            # Save validation history
+            val_result = {
+                'epoch': epoch + 1,
+                **val_metrics
+            }
+            history.append(val_result)
+            
+            history_path = os.path.join(training_config.output_dir, f"val_history_{task_config.task_name}_{training_config.head_type}.json")
+            with open(history_path, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+            
+            if val_metrics['f1'] > best_val_f1:
+                # Save best results
+                best_results_path = os.path.join(training_config.output_dir, f"best_val_results_{task_config.task_name}_{training_config.head_type}.json")
+                with open(best_results_path, 'w', encoding='utf-8') as f:
+                     json.dump(val_result, f, indent=2, ensure_ascii=False)
+                logger.info(f"✓ Best validation results saved to: {best_results_path}")
         
         # Early stopping (only main process makes decisions, but all processes follow)
         if val_metrics['f1'] > best_val_f1:
@@ -1019,7 +1040,9 @@ def main():
         num_workers=args.num_workers,
         fp16=args.fp16,
         pin_memory=args.pin_memory,
-        persistent_workers=args.persistent_workers
+        persistent_workers=args.persistent_workers,
+        head_type=args.head_type,
+        output_dir=args.output_dir
     )
     
     # Load tokenizer
