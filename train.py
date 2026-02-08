@@ -627,15 +627,34 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
         all_preds = filtered_preds
         all_labels = filtered_labels
     
+    # Calculate overall metrics (macro average)
     precision, recall, f1, _ = precision_recall_fscore_support(
         all_labels, all_preds, average='macro', zero_division=0
     )
+    
+    # Calculate per-label metrics
+    label_ids = sorted(set(all_labels) | set(all_preds))
+    per_label_precision, per_label_recall, per_label_f1, per_label_support = precision_recall_fscore_support(
+        all_labels, all_preds, labels=label_ids, average=None, zero_division=0
+    )
+    
+    # Build per-label metrics dictionary
+    per_label_metrics = {}
+    for i, label_id in enumerate(label_ids):
+        label_name = task_config.id2label.get(label_id, str(label_id))
+        per_label_metrics[label_name] = {
+            'precision': float(per_label_precision[i]),
+            'recall': float(per_label_recall[i]),
+            'f1': float(per_label_f1[i]),
+            'support': int(per_label_support[i])
+        }
     
     return {
         'loss': avg_loss,
         'precision': precision,
         'recall': recall,
-        'f1': f1
+        'f1': f1,
+        'per_label': per_label_metrics
     }
 
 
@@ -766,9 +785,23 @@ def train_with_early_stopping(
         if is_main_process():
             logger.info(f"Train Loss: {train_loss:.4f}")
             logger.info(f"Val Loss: {val_metrics['loss']:.4f}")
-            logger.info(f"Val Precision: {val_metrics['precision']:.4f}")
-            logger.info(f"Val Recall: {val_metrics['recall']:.4f}")
-            logger.info(f"Val F1: {val_metrics['f1']:.4f}")
+            logger.info(f"Val Precision (Overall): {val_metrics['precision']:.4f}")
+            logger.info(f"Val Recall (Overall): {val_metrics['recall']:.4f}")
+            logger.info(f"Val F1 (Overall): {val_metrics['f1']:.4f}")
+            
+            # Log per-label metrics
+            logger.info("\n  Per-Label Metrics:")
+            logger.info("  {:<12} {:>10} {:>10} {:>10} {:>10}".format(
+                "Label", "Precision", "Recall", "F1", "Support"))
+            logger.info("  " + "-" * 52)
+            for label_name, metrics in val_metrics['per_label'].items():
+                logger.info("  {:<12} {:>10.4f} {:>10.4f} {:>10.4f} {:>10}".format(
+                    label_name,
+                    metrics['precision'],
+                    metrics['recall'],
+                    metrics['f1'],
+                    metrics['support']
+                ))
         
         # Early stopping (only main process makes decisions, but all processes follow)
         if val_metrics['f1'] > best_val_f1:
