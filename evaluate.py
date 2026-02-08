@@ -24,6 +24,7 @@ from transformers import AutoModel, AutoTokenizer
 from torchcrf import CRF
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix
 
 
 # ============================================================================
