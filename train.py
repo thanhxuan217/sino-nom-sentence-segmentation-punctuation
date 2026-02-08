@@ -23,8 +23,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoModel, AutoTokenizer
+from torchcrf import CRF
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix
 
 
 # ============================================================================
@@ -80,6 +82,8 @@ class TrainingConfig:
     num_workers: int = 4
     pin_memory: bool = True
     persistent_workers: bool = True
+    head_type: str = "cnn"
+    output_dir: str = "outputs"
 
 
 # ============================================================================
@@ -169,19 +173,27 @@ class MultiKernelCNN(nn.Module):
 
 
 class SikuBERTForTokenClassification(nn.Module):
-    """SikuBERT with CNN classification head"""
+    """SikuBERT with configurable classification head
+    
+    Supports 3 head types:
+    - softmax: BERT → Dropout → Linear → CrossEntropyLoss (Softmax)
+    - crf: BERT → Dropout → Linear → CRF
+    - cnn: BERT → Dropout → MultiKernelCNN → Dropout → Linear
+    """
     
     def __init__(
         self,
         model_name: str,
         num_labels: int,
         dropout: float = 0.1,
-        use_extra_layer: bool = False,
-        extra_layer_type: str = None,
+        head_type: str = 'softmax',
         cnn_kernel_sizes: list = None,
         cnn_num_filters: int = 128
     ):
         super().__init__()
+        
+        self.head_type = head_type
+        self.num_labels = num_labels
         
         # Backbone: SikuBERT
         self.bert = AutoModel.from_pretrained(
@@ -195,25 +207,28 @@ class SikuBERTForTokenClassification(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(dropout)
         
-        # Extra layers
-        self.extra_layer = None
-        self.extra_layer_type = extra_layer_type
-        
-        if use_extra_layer and extra_layer_type == 'cnn':
+        # CNN layer (only for 'cnn' head type)
+        self.cnn_layer = None
+        if head_type == 'cnn':
             if cnn_kernel_sizes is None:
                 cnn_kernel_sizes = [3, 5, 7]
             
-            self.extra_layer = MultiKernelCNN(
+            self.cnn_layer = MultiKernelCNN(
                 hidden_size=self.hidden_size,
                 kernel_sizes=cnn_kernel_sizes,
                 num_filters=cnn_num_filters
             )
-            classifier_input_size = self.extra_layer.output_size
+            classifier_input_size = self.cnn_layer.output_size
         else:
             classifier_input_size = self.hidden_size
         
         # Classification head
         self.classifier = nn.Linear(classifier_input_size, num_labels)
+        
+        # CRF layer (only for 'crf' head type)
+        self.crf = None
+        if head_type == 'crf':
+            self.crf = CRF(num_labels, batch_first=True)
     
     def forward(self, input_ids, attention_mask, labels=None):
         # BERT encoding
@@ -223,21 +238,93 @@ class SikuBERTForTokenClassification(nn.Module):
         # Dropout
         sequence_output = self.dropout(sequence_output)
         
-        # Extra layer
-        if self.extra_layer is not None:
-            sequence_output = self.extra_layer(sequence_output)
+        # CNN layer (if using CNN head)
+        if self.cnn_layer is not None:
+            sequence_output = self.cnn_layer(sequence_output)
             sequence_output = self.dropout(sequence_output)
         
-        # Classification
-        logits = self.classifier(sequence_output)
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
         
-        # Calculate loss if labels provided
+        # Calculate loss and get predictions based on head type
         loss = None
-        if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.classifier.out_features), labels.view(-1))
         
-        return {'loss': loss, 'logits': logits}
+        outputs = {'logits': emissions}
+        loss = None
+        
+        if self.head_type == 'crf':
+            # CRF head
+            if labels is not None:
+                # Use attention_mask as CRF mask (ensures first token is masked in)
+                crf_mask = attention_mask.bool()
+                
+                # Replace -100 with 0 for CRF (will be ignored by mask effectively, but needed for input validity)
+                # Note: labels might have -100 at [CLS] which is masked IN by attention_mask, so we must have valid label there.
+                crf_labels = labels.clone()
+                crf_labels[labels == -100] = 0
+                
+                # CRF forward returns negative log-likelihood
+                loss = -self.crf(emissions, crf_labels, mask=crf_mask, reduction='mean')
+                outputs['loss'] = loss
+            
+            # Viterbi decoding
+            crf_mask = attention_mask.bool()
+            predictions = self.crf.decode(emissions, mask=crf_mask)
+            
+            # Convert list of lists to tensor (padding with -100)
+            max_len = emissions.size(1)
+            batch_size = emissions.size(0)
+            pred_tensor = torch.full((batch_size, max_len), -100, dtype=torch.long, device=emissions.device)
+            
+            for i, pred_seq in enumerate(predictions):
+                pred_tensor[i, :len(pred_seq)] = torch.tensor(pred_seq, device=emissions.device)
+            
+            outputs['predictions'] = pred_tensor
+
+        else:
+            # Softmax or CNN head (both use CrossEntropyLoss)
+            if labels is not None:
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+                outputs['loss'] = loss
+            
+            # Argmax for softmax/cnn heads
+            outputs['predictions'] = torch.argmax(emissions, dim=-1)
+            
+        return outputs
+
+    
+    def decode(self, input_ids, attention_mask):
+        """Decode predictions (especially useful for CRF)
+        
+        Returns:
+            List of predicted label sequences
+        """
+        # BERT encoding
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        sequence_output = outputs.last_hidden_state
+        
+        # Dropout (in eval mode, dropout is identity)
+        sequence_output = self.dropout(sequence_output)
+        
+        # CNN layer
+        if self.cnn_layer is not None:
+            sequence_output = self.cnn_layer(sequence_output)
+            sequence_output = self.dropout(sequence_output)
+        
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
+        
+        if self.head_type == 'crf':
+            # Use Viterbi decoding for CRF
+            # Use attention_mask as the CRF mask
+            crf_mask = attention_mask.bool()
+            predictions = self.crf.decode(emissions, mask=crf_mask)
+            return predictions
+        else:
+            # Argmax for softmax/cnn heads
+            predictions = torch.argmax(emissions, dim=-1)
+            return predictions.tolist()
 
 
 # ============================================================================
@@ -514,12 +601,15 @@ def run_test_set(
 
 
 def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False):
-    """Evaluate model on a dataset"""
+    """Evaluate model on a dataset with minimal memory footprint"""
     model.eval()
     
-    all_preds = []
-    all_labels = []
     total_loss = 0.0
+    num_batches = 0
+    
+    # Initialize confusion matrix
+    num_labels = task_config.num_labels
+    conf_matrix = np.zeros((num_labels, num_labels), dtype=np.int64)
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
@@ -533,50 +623,91 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
             loss = outputs['loss']
             if loss is None:
                 raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
-            # DataParallel gathers per-device scalar losses into a vector; reduce to scalar.
             if loss.dim() > 0:
                 loss = loss.mean()
 
             total_loss += loss.item()
-            predictions = torch.argmax(outputs['logits'], dim=-1)
+            num_batches += 1
             
-            # Collect predictions and labels (excluding -100)
-            mask = labels != -100
+            if 'predictions' in outputs:
+                predictions = outputs['predictions']
+            else:
+                predictions = torch.argmax(outputs['logits'], dim=-1)
             
-            for pred, label, m in zip(predictions, labels, mask):
-                valid_preds = pred[m].cpu().numpy()
-                valid_labels = label[m].cpu().numpy()
-                all_preds.extend(valid_preds)
-                all_labels.extend(valid_labels)
+            # Move to CPU and process immediately
+            predictions = predictions.cpu().numpy()
+            labels_cpu = labels.cpu().numpy()
+            
+            # Delete GPU tensors
+            del outputs, input_ids, attention_mask, labels
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Update confusion matrix (only valid labels)
+            mask = labels_cpu != -100
+            valid_preds = predictions[mask]
+            valid_labels = labels_cpu[mask]
+            
+            # Filter out ignore labels
+            if task_config.ignore_labels:
+                ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
+                keep_mask = ~np.isin(valid_labels, ignore_ids)
+                valid_preds = valid_preds[keep_mask]
+                valid_labels = valid_labels[keep_mask]
+            
+            # Update confusion matrix
+            conf_matrix += confusion_matrix(
+                valid_labels, valid_preds,
+                labels=list(range(num_labels))
+            )
+            
+            # Delete CPU arrays
+            del predictions, labels_cpu, mask, valid_preds, valid_labels
     
-    # Calculate metrics
-    avg_loss = total_loss / len(dataloader)
+    # Calculate metrics from confusion matrix
+    avg_loss = total_loss / num_batches
     
-    # Filter out ignore labels for metrics
-    if task_config.ignore_labels:
-        ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
-        filtered_preds = []
-        filtered_labels = []
+    # Calculate per-class precision, recall, F1
+    per_label_metrics = {}
+    precisions = []
+    recalls = []
+    f1s = []
+    
+    for i in range(num_labels):
+        tp = conf_matrix[i, i]
+        fp = conf_matrix[:, i].sum() - tp
+        fn = conf_matrix[i, :].sum() - tp
+        support = conf_matrix[i, :].sum()
         
-        for pred, label in zip(all_preds, all_labels):
-            if label not in ignore_ids:
-                filtered_preds.append(pred)
-                filtered_labels.append(label)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         
-        all_preds = filtered_preds
-        all_labels = filtered_labels
+        label_name = task_config.id2label.get(i, str(i))
+        per_label_metrics[label_name] = {
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f1),
+            'support': int(support)
+        }
+        
+        if support > 0:  # Only include labels with support for macro average
+            precisions.append(precision)
+            recalls.append(recall)
+            f1s.append(f1)
     
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        all_labels, all_preds, average='macro', zero_division=0
-    )
+    # Macro average
+    macro_precision = np.mean(precisions) if precisions else 0.0
+    macro_recall = np.mean(recalls) if recalls else 0.0
+    macro_f1 = np.mean(f1s) if f1s else 0.0
     
     return {
         'loss': avg_loss,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1
+        'precision': macro_precision,
+        'recall': macro_recall,
+        'f1': macro_f1,
+        'per_label': per_label_metrics
     }
-
 
 def train_epoch(model, train_loader, optimizer, scheduler, device, config, logger, epoch, scaler=None):
     """Train for one epoch"""
@@ -666,6 +797,7 @@ def train_with_early_stopping(
     
     best_val_f1 = 0.0
     patience_counter = 0
+    history = []
     
     if is_main_process():
         logger.info("\n" + "="*70)
@@ -705,9 +837,41 @@ def train_with_early_stopping(
         if is_main_process():
             logger.info(f"Train Loss: {train_loss:.4f}")
             logger.info(f"Val Loss: {val_metrics['loss']:.4f}")
-            logger.info(f"Val Precision: {val_metrics['precision']:.4f}")
-            logger.info(f"Val Recall: {val_metrics['recall']:.4f}")
-            logger.info(f"Val F1: {val_metrics['f1']:.4f}")
+            logger.info(f"Val Precision (Overall): {val_metrics['precision']:.4f}")
+            logger.info(f"Val Recall (Overall): {val_metrics['recall']:.4f}")
+            logger.info(f"Val F1 (Overall): {val_metrics['f1']:.4f}")
+            
+            # Log per-label metrics
+            logger.info("\n  Per-Label Metrics:")
+            logger.info("  {:<12} {:>10} {:>10} {:>10} {:>10}".format(
+                "Label", "Precision", "Recall", "F1", "Support"))
+            logger.info("  " + "-" * 52)
+            for label_name, metrics in val_metrics['per_label'].items():
+                logger.info("  {:<12} {:>10.4f} {:>10.4f} {:>10.4f} {:>10}".format(
+                    label_name,
+                    metrics['precision'],
+                    metrics['recall'],
+                    metrics['f1'],
+                    metrics['support']
+                ))
+        
+            # Save validation history
+            val_result = {
+                'epoch': epoch + 1,
+                **val_metrics
+            }
+            history.append(val_result)
+            
+            history_path = os.path.join(training_config.output_dir, f"val_history_{task_config.task_name}_{training_config.head_type}.json")
+            with open(history_path, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+            
+            if val_metrics['f1'] > best_val_f1:
+                # Save best results
+                best_results_path = os.path.join(training_config.output_dir, f"best_val_results_{task_config.task_name}_{training_config.head_type}.json")
+                with open(best_results_path, 'w', encoding='utf-8') as f:
+                     json.dump(val_result, f, indent=2, ensure_ascii=False)
+                logger.info(f"✓ Best validation results saved to: {best_results_path}")
         
         # Early stopping (only main process makes decisions, but all processes follow)
         if val_metrics['f1'] > best_val_f1:
@@ -747,7 +911,7 @@ def main():
     except RuntimeError:
         pass  # Already set
     
-    parser = argparse.ArgumentParser(description='Train SikuBERT with CNN')
+    parser = argparse.ArgumentParser(description='Train SikuBERT for Token Classification')
     
     # Task configuration
     parser.add_argument('--task', type=str, required=True, 
@@ -800,9 +964,14 @@ def main():
     
     # CNN configuration
     parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7],
-                       help='CNN kernel sizes')
+                       help='CNN kernel sizes (only used when head_type=cnn)')
     parser.add_argument('--cnn_num_filters', type=int, default=256,
-                       help='Number of CNN filters')
+                       help='Number of CNN filters (only used when head_type=cnn)')
+    
+    # Head type configuration
+    parser.add_argument('--head_type', type=str, default='cnn',
+                       choices=['softmax', 'crf', 'cnn'],
+                       help='Classification head type: softmax (FC only), crf (BERT+CRF), cnn (BERT+CNN)')
     
     # Output configuration
     parser.add_argument('--output_dir', type=str, default='outputs',
@@ -920,7 +1089,9 @@ def main():
         num_workers=args.num_workers,
         fp16=args.fp16,
         pin_memory=args.pin_memory,
-        persistent_workers=args.persistent_workers
+        persistent_workers=args.persistent_workers,
+        head_type=args.head_type,
+        output_dir=args.output_dir
     )
     
     # Load tokenizer
@@ -950,13 +1121,12 @@ def main():
     
     # Create model
     if is_main_process():
-        logger.info("✓ Creating model...")
+        logger.info(f"✓ Creating model with head_type={args.head_type}...")
     model = SikuBERTForTokenClassification(
         model_name=args.model_name,
         num_labels=task_config.num_labels,
         dropout=args.dropout,
-        use_extra_layer=True,
-        extra_layer_type='cnn',
+        head_type=args.head_type,
         cnn_kernel_sizes=args.cnn_kernel_sizes,
         cnn_num_filters=args.cnn_num_filters
     )
@@ -981,7 +1151,7 @@ def main():
     
     # Extract train file name for checkpoint naming
     train_file_name = os.path.splitext(os.path.basename(args.train_path))[0]
-    save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_cnn.pt")
+    save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_{args.head_type}.pt")
     
     best_val_f1 = train_with_early_stopping(
         model, train_loader, val_loader,
@@ -1025,3 +1195,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

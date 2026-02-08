@@ -15,7 +15,7 @@
 # ============================================================================
 # WORKING DIRECTORY & GPU NODE
 # ============================================================================
-export WORKING_DIR="/media02/ddien02/thanhxuan217"
+export WORKING_DIR="/media02/ddien02/thanhxuan217/main_src"
 export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 
 # GPU Node Configuration (for large datasets stored on /raid)
@@ -85,6 +85,12 @@ export CNN_KERNEL_SIZES="3 5 7"
 export CNN_NUM_FILTERS=256
 
 # ============================================================================
+# HEAD TYPE CONFIGURATION
+# ============================================================================
+# Options: "softmax" (FC only), "crf" (BERT+CRF), "cnn" (BERT+CNN)
+export HEAD_TYPE="cnn"
+
+# ============================================================================
 # OUTPUT DIRECTORIES
 # ============================================================================
 export OUTPUT_DIR="${WORKING_DIR}/outputs"
@@ -95,7 +101,7 @@ export LOG_DIR="${WORKING_DIR}/logs"
 # EVALUATION CONFIGURATION
 # ============================================================================
 # Path to the trained model for evaluation
-export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/best_${TASK}_model_cnn.pt"
+export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/best_${TASK}_model_${HEAD_TYPE}.pt"
 
 # ============================================================================
 # MULTI-PHASE TRAINING (Resume from checkpoint)

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=/media02/ddien02/thanhxuan217/logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=/media02/ddien02/thanhxuan217/logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodelist=gpu04                  # GPU node (idle) - must match where data is stored on /raid!
 #SBATCH --nodes=1                         # Number of nodes
@@ -106,6 +106,7 @@ echo "Dropout: $DROPOUT"
 echo ""
 echo "CNN Kernels: $CNN_KERNEL_SIZES"
 echo "CNN Filters: $CNN_NUM_FILTERS"
+echo "Head Type: $HEAD_TYPE"
 echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "Model Save Dir: $MODEL_SAVE_DIR"
@@ -149,6 +150,7 @@ torchrun --nproc_per_node=$NGPUS train.py \
     $PERSISTENT_WORKERS \
     --cnn_kernel_sizes $CNN_KERNEL_SIZES \
     --cnn_num_filters $CNN_NUM_FILTERS \
+    --head_type $HEAD_TYPE \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
     --log_dir $LOG_DIR \

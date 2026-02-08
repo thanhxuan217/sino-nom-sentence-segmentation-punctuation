@@ -21,8 +21,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoModel, AutoTokenizer
+from torchcrf import CRF
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix
 
 
 # ============================================================================
@@ -183,20 +185,29 @@ class MultiKernelCNN(nn.Module):
 
 
 class SikuBERTForTokenClassification(nn.Module):
-    """SikuBERT with CNN classification head"""
+    """SikuBERT with configurable classification head
+    
+    Supports 3 head types:
+    - softmax: BERT → Dropout → Linear → CrossEntropyLoss (Softmax)
+    - crf: BERT → Dropout → Linear → CRF
+    - cnn: BERT → Dropout → MultiKernelCNN → Dropout → Linear
+    """
     
     def __init__(
         self,
         model_name: str,
         num_labels: int,
         dropout: float = 0.1,
-        use_extra_layer: bool = False,
-        extra_layer_type: str = None,
+        head_type: str = 'softmax',
         cnn_kernel_sizes: list = None,
         cnn_num_filters: int = 128
     ):
         super().__init__()
         
+        self.head_type = head_type
+        self.num_labels = num_labels
+        
+        # Backbone: SikuBERT
         self.bert = AutoModel.from_pretrained(
             model_name,
             use_safetensors=True,
@@ -204,43 +215,128 @@ class SikuBERTForTokenClassification(nn.Module):
         )
 
         self.hidden_size = self.bert.config.hidden_size
-        self.dropout = nn.Dropout(dropout)
-        self.extra_layer = None
-        self.extra_layer_type = extra_layer_type
         
-        if use_extra_layer and extra_layer_type == 'cnn':
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+        
+        # CNN layer (only for 'cnn' head type)
+        self.cnn_layer = None
+        if head_type == 'cnn':
             if cnn_kernel_sizes is None:
                 cnn_kernel_sizes = [3, 5, 7]
             
-            self.extra_layer = MultiKernelCNN(
+            self.cnn_layer = MultiKernelCNN(
                 hidden_size=self.hidden_size,
                 kernel_sizes=cnn_kernel_sizes,
                 num_filters=cnn_num_filters
             )
-            classifier_input_size = self.extra_layer.output_size
+            classifier_input_size = self.cnn_layer.output_size
         else:
             classifier_input_size = self.hidden_size
         
+        # Classification head
         self.classifier = nn.Linear(classifier_input_size, num_labels)
+        
+        # CRF layer (only for 'crf' head type)
+        self.crf = None
+        if head_type == 'crf':
+            self.crf = CRF(num_labels, batch_first=True)
     
     def forward(self, input_ids, attention_mask, labels=None):
+        # BERT encoding
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         sequence_output = outputs.last_hidden_state
+        
+        # Dropout
         sequence_output = self.dropout(sequence_output)
         
-        if self.extra_layer is not None:
-            sequence_output = self.extra_layer(sequence_output)
+        # CNN layer (if using CNN head)
+        if self.cnn_layer is not None:
+            sequence_output = self.cnn_layer(sequence_output)
             sequence_output = self.dropout(sequence_output)
         
-        logits = self.classifier(sequence_output)
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
         
+        # Calculate loss and get predictions based on head type
         loss = None
-        if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.classifier.out_features), labels.view(-1))
         
-        return {'loss': loss, 'logits': logits}
+        outputs = {'logits': emissions}
+        loss = None
+        
+        if self.head_type == 'crf':
+            # CRF head
+            if labels is not None:
+                # Use attention_mask as CRF mask (ensures first token is masked in)
+                crf_mask = attention_mask.bool()
+                
+                # Replace -100 with 0 for CRF (will be ignored by mask effectively, but needed for input validity)
+                # Note: labels might have -100 at [CLS] which is masked IN by attention_mask, so we must have valid label there.
+                crf_labels = labels.clone()
+                crf_labels[labels == -100] = 0
+                
+                # CRF forward returns negative log-likelihood
+                loss = -self.crf(emissions, crf_labels, mask=crf_mask, reduction='mean')
+                outputs['loss'] = loss
+            
+            # Viterbi decoding
+            crf_mask = attention_mask.bool()
+            predictions = self.crf.decode(emissions, mask=crf_mask)
+            
+            # Convert list of lists to tensor (padding with -100)
+            max_len = emissions.size(1)
+            batch_size = emissions.size(0)
+            pred_tensor = torch.full((batch_size, max_len), -100, dtype=torch.long, device=emissions.device)
+            
+            for i, pred_seq in enumerate(predictions):
+                pred_tensor[i, :len(pred_seq)] = torch.tensor(pred_seq, device=emissions.device)
+            
+            outputs['predictions'] = pred_tensor
 
+        else:
+            # Softmax or CNN head (both use CrossEntropyLoss)
+            if labels is not None:
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+                outputs['loss'] = loss
+            
+            # Argmax for softmax/cnn heads
+            outputs['predictions'] = torch.argmax(emissions, dim=-1)
+            
+        return outputs
+
+    
+    def decode(self, input_ids, attention_mask):
+        """Decode predictions (especially useful for CRF)
+        
+        Returns:
+            List of predicted label sequences
+        """
+        # BERT encoding
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        sequence_output = outputs.last_hidden_state
+        
+        # Dropout (in eval mode, dropout is identity)
+        sequence_output = self.dropout(sequence_output)
+        
+        # CNN layer
+        if self.cnn_layer is not None:
+            sequence_output = self.cnn_layer(sequence_output)
+            sequence_output = self.dropout(sequence_output)
+        
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
+        
+        if self.head_type == 'crf':
+            # Use Viterbi decoding for CRF
+            # Use attention_mask as the CRF mask
+            crf_mask = attention_mask.bool()
+            predictions = self.crf.decode(emissions, mask=crf_mask)
+            return predictions
+        else:
+            # Argmax for softmax/cnn heads
+            predictions = torch.argmax(emissions, dim=-1)
+            return predictions.tolist()
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -294,18 +390,19 @@ def apply_segmentation_inline(text: str, labels: List[str], sep: str = " | ") ->
 # EVALUATION FUNCTIONS
 # ============================================================================
 
-def evaluate_model_ddp(model, dataloader, task_config, device, use_amp: bool = False):
-    """Evaluate model on a dataset with DDP support"""
+def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False):
+    """Evaluate model on a dataset with minimal memory footprint"""
     model.eval()
     
-    local_preds = []
-    local_labels = []
     total_loss = 0.0
     num_batches = 0
     
+    # Initialize confusion matrix
+    num_labels = task_config.num_labels
+    conf_matrix = np.zeros((num_labels, num_labels), dtype=np.int64)
+    
     with torch.no_grad():
-        progress_bar = tqdm(dataloader, desc="Evaluating", disable=not is_main_process())
-        for batch in progress_bar:
+        for batch in tqdm(dataloader, desc="Evaluating"):
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
@@ -314,77 +411,93 @@ def evaluate_model_ddp(model, dataloader, task_config, device, use_amp: bool = F
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 
             loss = outputs['loss']
-            if loss is not None:
-                if loss.dim() > 0:
-                    loss = loss.mean()
-                total_loss += loss.item()
+            if loss is None:
+                raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
+            if loss.dim() > 0:
+                loss = loss.mean()
+
+            total_loss += loss.item()
             num_batches += 1
             
-            predictions = torch.argmax(outputs['logits'], dim=-1)
-            mask = labels != -100
+            if 'predictions' in outputs:
+                predictions = outputs['predictions']
+            else:
+                predictions = torch.argmax(outputs['logits'], dim=-1)
             
-            for pred, label, m in zip(predictions, labels, mask):
-                valid_preds = pred[m].cpu().numpy()
-                valid_labels = label[m].cpu().numpy()
-                local_preds.extend(valid_preds.tolist())
-                local_labels.extend(valid_labels.tolist())
+            # Move to CPU and process immediately
+            predictions = predictions.cpu().numpy()
+            labels_cpu = labels.cpu().numpy()
+            
+            # Delete GPU tensors
+            del outputs, input_ids, attention_mask, labels
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Update confusion matrix (only valid labels)
+            mask = labels_cpu != -100
+            valid_preds = predictions[mask]
+            valid_labels = labels_cpu[mask]
+            
+            # Filter out ignore labels
+            if task_config.ignore_labels:
+                ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
+                keep_mask = ~np.isin(valid_labels, ignore_ids)
+                valid_preds = valid_preds[keep_mask]
+                valid_labels = valid_labels[keep_mask]
+            
+            # Update confusion matrix
+            conf_matrix += confusion_matrix(
+                valid_labels, valid_preds,
+                labels=list(range(num_labels))
+            )
+            
+            # Delete CPU arrays
+            del predictions, labels_cpu, mask, valid_preds, valid_labels
     
-    # Gather results from all processes
-    if dist.is_initialized():
-        # Gather predictions and labels
-        all_preds_gathered = [None] * dist.get_world_size()
-        all_labels_gathered = [None] * dist.get_world_size()
-        dist.all_gather_object(all_preds_gathered, local_preds)
-        dist.all_gather_object(all_labels_gathered, local_labels)
-        
-        if is_main_process():
-            all_preds = []
-            all_labels = []
-            for p, l in zip(all_preds_gathered, all_labels_gathered):
-                all_preds.extend(p)
-                all_labels.extend(l)
-        else:
-            all_preds = local_preds
-            all_labels = local_labels
-        
-        # Gather loss
-        loss_tensor = torch.tensor([total_loss, num_batches], device=device)
-        dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-        avg_loss = loss_tensor[0].item() / loss_tensor[1].item() if loss_tensor[1].item() > 0 else 0.0
-    else:
-        all_preds = local_preds
-        all_labels = local_labels
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+    # Calculate metrics from confusion matrix
+    avg_loss = total_loss / num_batches
     
-    # Only main process calculates metrics
-    if is_main_process():
-        # Filter out ignore labels for metrics
-        if task_config.ignore_labels:
-            ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
-            filtered_preds = []
-            filtered_labels = []
-            
-            for pred, label in zip(all_preds, all_labels):
-                if label not in ignore_ids:
-                    filtered_preds.append(pred)
-                    filtered_labels.append(label)
-            
-            all_preds = filtered_preds
-            all_labels = filtered_labels
+    # Calculate per-class precision, recall, F1
+    per_label_metrics = {}
+    precisions = []
+    recalls = []
+    f1s = []
+    
+    for i in range(num_labels):
+        tp = conf_matrix[i, i]
+        fp = conf_matrix[:, i].sum() - tp
+        fn = conf_matrix[i, :].sum() - tp
+        support = conf_matrix[i, :].sum()
         
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            all_labels, all_preds, average='macro', zero_division=0
-        )
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         
-        return {
-            'loss': avg_loss,
-            'precision': precision,
-            'recall': recall,
-            'f1': f1
+        label_name = task_config.id2label.get(i, str(i))
+        per_label_metrics[label_name] = {
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f1),
+            'support': int(support)
         }
-    else:
-        return {'loss': avg_loss, 'precision': 0, 'recall': 0, 'f1': 0}
-
+        
+        if support > 0:  # Only include labels with support for macro average
+            precisions.append(precision)
+            recalls.append(recall)
+            f1s.append(f1)
+    
+    # Macro average
+    macro_precision = np.mean(precisions) if precisions else 0.0
+    macro_recall = np.mean(recalls) if recalls else 0.0
+    macro_f1 = np.mean(f1s) if f1s else 0.0
+    
+    return {
+        'loss': avg_loss,
+        'precision': macro_precision,
+        'recall': macro_recall,
+        'f1': macro_f1,
+        'per_label': per_label_metrics
+    }
 
 def run_test_set_ddp(
     model,
@@ -405,13 +518,20 @@ def run_test_set_ddp(
     
     with torch.no_grad():
         progress_bar = tqdm(dataloader, desc="Running predictions", disable=not is_main_process())
-        for batch in progress_bar:
+        for batch_idx, batch in enumerate(progress_bar):
+            if batch_idx >= 10:
+                break
+                
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             indices = batch['idx'].tolist()
             
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            predictions = torch.argmax(outputs['logits'], dim=-1)
+            
+            if 'predictions' in outputs:
+                predictions = outputs['predictions']
+            else:
+                predictions = torch.argmax(outputs['logits'], dim=-1)
             
             # Process each sample in batch
             for i, idx in enumerate(indices):
@@ -455,7 +575,7 @@ def run_test_set_ddp(
                     "gold_text_labeled": gold_text,
                     "pred_text_labeled": pred_text,
                 })
-    
+            
     # Gather results from all processes
     if dist.is_initialized():
         all_results_gathered = [None] * dist.get_world_size()
@@ -527,9 +647,14 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.1,
                        help='Dropout rate (must match training)')
     parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7],
-                       help='CNN kernel sizes (must match training)')
+                       help='CNN kernel sizes (only used when head_type=cnn)')
     parser.add_argument('--cnn_num_filters', type=int, default=256,
-                       help='Number of CNN filters (must match training)')
+                       help='Number of CNN filters (only used when head_type=cnn)')
+    
+    # Head type configuration
+    parser.add_argument('--head_type', type=str, default='cnn',
+                       choices=['softmax', 'crf', 'cnn'],
+                       help='Classification head type (must match training)')
     
     # Inference configuration
     parser.add_argument('--batch_size', type=int, default=64,
@@ -632,13 +757,12 @@ def main():
     
     # Create model and load weights
     if is_main_process():
-        logger.info("✓ Loading model...")
+        logger.info(f"✓ Loading model with head_type={args.head_type}...")
     model = SikuBERTForTokenClassification(
         model_name=args.model_name,
         num_labels=task_config.num_labels,
         dropout=args.dropout,
-        use_extra_layer=True,
-        extra_layer_type='cnn',
+        head_type=args.head_type,
         cnn_kernel_sizes=args.cnn_kernel_sizes,
         cnn_num_filters=args.cnn_num_filters
     )
@@ -686,7 +810,7 @@ def main():
         logger.info("TEST SET EVALUATION")
         logger.info("="*70)
     
-    test_metrics = evaluate_model_ddp(
+    test_metrics = evaluate_model(
         model,
         test_loader,
         task_config,
@@ -696,9 +820,23 @@ def main():
     
     if is_main_process():
         logger.info(f"\nTest Loss: {test_metrics['loss']:.4f}")
-        logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
-        logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
-        logger.info(f"Test F1: {test_metrics['f1']:.4f}")
+        logger.info(f"Test Precision (Overall): {test_metrics['precision']:.4f}")
+        logger.info(f"Test Recall (Overall): {test_metrics['recall']:.4f}")
+        logger.info(f"Test F1 (Overall): {test_metrics['f1']:.4f}")
+        
+        # Log per-label metrics
+        logger.info("\n  Per-Label Metrics:")
+        logger.info("  {:<12} {:>10} {:>10} {:>10} {:>10}".format(
+            "Label", "Precision", "Recall", "F1", "Support"))
+        logger.info("  " + "-" * 52)
+        for label_name, metrics in test_metrics['per_label'].items():
+            logger.info("  {:<12} {:>10.4f} {:>10.4f} {:>10.4f} {:>10}".format(
+                label_name,
+                metrics['precision'],
+                metrics['recall'],
+                metrics['f1'],
+                metrics['support']
+            ))
     
     # Run predictions on test set
     if is_main_process():
