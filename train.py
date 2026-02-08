@@ -248,27 +248,50 @@ class SikuBERTForTokenClassification(nn.Module):
         # Calculate loss and get predictions based on head type
         loss = None
         
+        outputs = {'logits': emissions}
+        loss = None
+        
         if self.head_type == 'crf':
             # CRF head
-            # Create mask: True for valid tokens, False for padding and special tokens
-            # labels == -100 are ignored positions (padding, [CLS], [SEP])
             if labels is not None:
-                # Create CRF mask (True for valid, False for ignored)
-                crf_mask = (labels != -100)
-                # Replace -100 with 0 for CRF (it will be masked anyway)
+                # Use attention_mask as CRF mask (ensures first token is masked in)
+                crf_mask = attention_mask.bool()
+                
+                # Replace -100 with 0 for CRF (will be ignored by mask effectively, but needed for input validity)
+                # Note: labels might have -100 at [CLS] which is masked IN by attention_mask, so we must have valid label there.
                 crf_labels = labels.clone()
-                crf_labels[~crf_mask] = 0
+                crf_labels[labels == -100] = 0
+                
                 # CRF forward returns negative log-likelihood
                 loss = -self.crf(emissions, crf_labels, mask=crf_mask, reduction='mean')
+                outputs['loss'] = loss
             
-            return {'loss': loss, 'logits': emissions}
+            # Viterbi decoding
+            crf_mask = attention_mask.bool()
+            predictions = self.crf.decode(emissions, mask=crf_mask)
+            
+            # Convert list of lists to tensor (padding with -100)
+            max_len = emissions.size(1)
+            batch_size = emissions.size(0)
+            pred_tensor = torch.full((batch_size, max_len), -100, dtype=torch.long, device=emissions.device)
+            
+            for i, pred_seq in enumerate(predictions):
+                pred_tensor[i, :len(pred_seq)] = torch.tensor(pred_seq, device=emissions.device)
+            
+            outputs['predictions'] = pred_tensor
+
         else:
             # Softmax or CNN head (both use CrossEntropyLoss)
             if labels is not None:
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+                outputs['loss'] = loss
             
-            return {'loss': loss, 'logits': emissions}
+            # Argmax for softmax/cnn heads
+            outputs['predictions'] = torch.argmax(emissions, dim=-1)
+            
+        return outputs
+
     
     def decode(self, input_ids, attention_mask):
         """Decode predictions (especially useful for CRF)
@@ -601,7 +624,11 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
                 loss = loss.mean()
 
             total_loss += loss.item()
-            predictions = torch.argmax(outputs['logits'], dim=-1)
+            
+            if 'predictions' in outputs:
+                predictions = outputs['predictions']
+            else:
+                predictions = torch.argmax(outputs['logits'], dim=-1)
             
             # Collect predictions and labels (excluding -100)
             mask = labels != -100
