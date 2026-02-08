@@ -27,7 +27,7 @@ bash setup.slurm
 **Step 1: Create your personal working directory:**
 ```bash
 # Replace 'thanhxuan217' with your username
-export WORKING_DIR="/media02/ddien02/thanhxuan217"
+export WORKING_DIR="/media02/ddien02/thanhxuan217/main_src"
 mkdir -p ${WORKING_DIR}/{envs,outputs,models,logs}
 ```
 
@@ -140,7 +140,7 @@ export NUM_EPOCHS=5
 
 ```bash
 # Navigate to your working directory first
-cd /media02/ddien02/thanhxuan217
+cd /media02/ddien02/thanhxuan217/main_src
 
 # Submit the job
 sbatch run.slurm

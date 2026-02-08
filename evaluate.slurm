@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_eval           # Job name
-#SBATCH --output=/media02/ddien02/thanhxuan217/logs/eval_%j.out  # Output file
-#SBATCH --error=/media02/ddien02/thanhxuan217/logs/eval_%j.err   # Error file
+#SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/eval_%j.out  # Output file
+#SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/eval_%j.err   # Error file
 #SBATCH --partition=batch                  # Partition name
 #SBATCH --nodelist=gpu04                   # GPU node - must match where data/model is stored!
 #SBATCH --nodes=1                          # Number of nodes

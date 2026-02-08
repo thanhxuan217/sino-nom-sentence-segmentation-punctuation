@@ -26,6 +26,7 @@ from transformers import AutoModel, AutoTokenizer
 from torchcrf import CRF
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix
 
 
 # ============================================================================
@@ -600,12 +601,15 @@ def run_test_set(
 
 
 def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False):
-    """Evaluate model on a dataset"""
+    """Evaluate model on a dataset with minimal memory footprint"""
     model.eval()
     
-    all_preds = []
-    all_labels = []
     total_loss = 0.0
+    num_batches = 0
+    
+    # Initialize confusion matrix
+    num_labels = task_config.num_labels
+    conf_matrix = np.zeros((num_labels, num_labels), dtype=np.int64)
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
@@ -619,73 +623,91 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
             loss = outputs['loss']
             if loss is None:
                 raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
-            # DataParallel gathers per-device scalar losses into a vector; reduce to scalar.
             if loss.dim() > 0:
                 loss = loss.mean()
 
             total_loss += loss.item()
+            num_batches += 1
             
             if 'predictions' in outputs:
                 predictions = outputs['predictions']
             else:
                 predictions = torch.argmax(outputs['logits'], dim=-1)
             
-            # Collect predictions and labels (excluding -100)
-            mask = labels != -100
+            # Move to CPU and process immediately
+            predictions = predictions.cpu().numpy()
+            labels_cpu = labels.cpu().numpy()
             
-            for pred, label, m in zip(predictions, labels, mask):
-                valid_preds = pred[m].cpu().numpy()
-                valid_labels = label[m].cpu().numpy()
-                all_preds.extend(valid_preds)
-                all_labels.extend(valid_labels)
+            # Delete GPU tensors
+            del outputs, input_ids, attention_mask, labels
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Update confusion matrix (only valid labels)
+            mask = labels_cpu != -100
+            valid_preds = predictions[mask]
+            valid_labels = labels_cpu[mask]
+            
+            # Filter out ignore labels
+            if task_config.ignore_labels:
+                ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
+                keep_mask = ~np.isin(valid_labels, ignore_ids)
+                valid_preds = valid_preds[keep_mask]
+                valid_labels = valid_labels[keep_mask]
+            
+            # Update confusion matrix
+            conf_matrix += confusion_matrix(
+                valid_labels, valid_preds,
+                labels=list(range(num_labels))
+            )
+            
+            # Delete CPU arrays
+            del predictions, labels_cpu, mask, valid_preds, valid_labels
     
-    # Calculate metrics
-    avg_loss = total_loss / len(dataloader)
+    # Calculate metrics from confusion matrix
+    avg_loss = total_loss / num_batches
     
-    # Filter out ignore labels for metrics
-    if task_config.ignore_labels:
-        ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
-        filtered_preds = []
-        filtered_labels = []
-        
-        for pred, label in zip(all_preds, all_labels):
-            if label not in ignore_ids:
-                filtered_preds.append(pred)
-                filtered_labels.append(label)
-        
-        all_preds = filtered_preds
-        all_labels = filtered_labels
-    
-    # Calculate overall metrics (macro average)
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        all_labels, all_preds, average='macro', zero_division=0
-    )
-    
-    # Calculate per-label metrics
-    label_ids = sorted(set(all_labels) | set(all_preds))
-    per_label_precision, per_label_recall, per_label_f1, per_label_support = precision_recall_fscore_support(
-        all_labels, all_preds, labels=label_ids, average=None, zero_division=0
-    )
-    
-    # Build per-label metrics dictionary
+    # Calculate per-class precision, recall, F1
     per_label_metrics = {}
-    for i, label_id in enumerate(label_ids):
-        label_name = task_config.id2label.get(label_id, str(label_id))
+    precisions = []
+    recalls = []
+    f1s = []
+    
+    for i in range(num_labels):
+        tp = conf_matrix[i, i]
+        fp = conf_matrix[:, i].sum() - tp
+        fn = conf_matrix[i, :].sum() - tp
+        support = conf_matrix[i, :].sum()
+        
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        
+        label_name = task_config.id2label.get(i, str(i))
         per_label_metrics[label_name] = {
-            'precision': float(per_label_precision[i]),
-            'recall': float(per_label_recall[i]),
-            'f1': float(per_label_f1[i]),
-            'support': int(per_label_support[i])
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f1),
+            'support': int(support)
         }
+        
+        if support > 0:  # Only include labels with support for macro average
+            precisions.append(precision)
+            recalls.append(recall)
+            f1s.append(f1)
+    
+    # Macro average
+    macro_precision = np.mean(precisions) if precisions else 0.0
+    macro_recall = np.mean(recalls) if recalls else 0.0
+    macro_f1 = np.mean(f1s) if f1s else 0.0
     
     return {
         'loss': avg_loss,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
+        'precision': macro_precision,
+        'recall': macro_recall,
+        'f1': macro_f1,
         'per_label': per_label_metrics
     }
-
 
 def train_epoch(model, train_loader, optimizer, scheduler, device, config, logger, epoch, scaler=None):
     """Train for one epoch"""

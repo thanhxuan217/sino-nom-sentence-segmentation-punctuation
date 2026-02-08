@@ -15,7 +15,7 @@
 # ============================================================================
 # WORKING DIRECTORY & GPU NODE
 # ============================================================================
-export WORKING_DIR="/media02/ddien02/thanhxuan217"
+export WORKING_DIR="/media02/ddien02/thanhxuan217/main_src"
 export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 
 # GPU Node Configuration (for large datasets stored on /raid)

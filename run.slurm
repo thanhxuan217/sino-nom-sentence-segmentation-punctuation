@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=/media02/ddien02/thanhxuan217/logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=/media02/ddien02/thanhxuan217/logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodelist=gpu04                  # GPU node (idle) - must match where data is stored on /raid!
 #SBATCH --nodes=1                         # Number of nodes
