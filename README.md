@@ -189,17 +189,37 @@ Key parameters you can adjust:
 | `--warmup_ratio` | Warmup ratio for learning rate | 0.1 |
 | `--weight_decay` | Weight decay for AdamW | 0.01 |
 | `--dropout` | Dropout rate | 0.1 |
-| `--cnn_kernel_sizes` | CNN kernel sizes | 3 5 7 |
-| `--cnn_num_filters` | Number of CNN filters | 256 |
+| `--cnn_kernel_sizes` | CNN kernel sizes (for cnn head) | 3 5 7 |
+| `--cnn_num_filters` | Number of CNN filters (for cnn head) | 256 |
+| `--head_type` | Classification head type | cnn |
+
+### Classification Head Types
+
+The model supports 3 classification head architectures:
+
+| Head Type | Description | Architecture |
+|-----------|-------------|-------------|
+| `softmax` | Fully Connected only | BERT → Dropout → Linear → Softmax |
+| `crf` | BERT + CRF | BERT → Dropout → Linear → CRF |
+| `cnn` | BERT + CNN (default) | BERT → Dropout → CNN → Dropout → Linear |
 
 ### Model Architecture
 
 The model consists of:
 1. **SikuBERT** backbone (pretrained)
-2. **Multi-kernel CNN** layer with configurable kernel sizes
-3. **Classification head** for token-level predictions
+2. **Optional CNN layer** with configurable kernel sizes (when using `--head_type cnn`)
+3. **Optional CRF layer** for sequence labeling (when using `--head_type crf`)
+4. **Classification head** for token-level predictions
 
+Example architectures:
 ```
+# softmax (FC only)
+SikuBERT → Dropout → Linear Classification
+
+# crf
+SikuBERT → Dropout → Linear → CRF
+
+# cnn (default)
 SikuBERT → Dropout → Multi-Kernel CNN → Dropout → Linear Classification
 ```
 
@@ -249,10 +269,24 @@ python train.py \
     --train_path data/segmentation_train.json \
     --val_path data/segmentation_val.json \
     --test_path data/segmentation_test.json \
+    --head_type cnn \
     --batch_size 32 \
     --num_epochs 5 \
     --output_dir outputs \
     --model_save_dir models
+```
+
+#### Examples with Different Head Types
+
+```bash
+# Train with Softmax (FC only)
+python train.py --task segmentation --head_type softmax ...
+
+# Train with CRF
+python train.py --task segmentation --head_type crf ...
+
+# Train with CNN (default)
+python train.py --task segmentation --head_type cnn ...
 ```
 
 ### Hyperparameter Sweep

@@ -23,6 +23,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoModel, AutoTokenizer
+from torchcrf import CRF
 from tqdm import tqdm
 from sklearn.metrics import precision_recall_fscore_support
 
@@ -169,19 +170,27 @@ class MultiKernelCNN(nn.Module):
 
 
 class SikuBERTForTokenClassification(nn.Module):
-    """SikuBERT with CNN classification head"""
+    """SikuBERT with configurable classification head
+    
+    Supports 3 head types:
+    - softmax: BERT → Dropout → Linear → CrossEntropyLoss (Softmax)
+    - crf: BERT → Dropout → Linear → CRF
+    - cnn: BERT → Dropout → MultiKernelCNN → Dropout → Linear
+    """
     
     def __init__(
         self,
         model_name: str,
         num_labels: int,
         dropout: float = 0.1,
-        use_extra_layer: bool = False,
-        extra_layer_type: str = None,
+        head_type: str = 'softmax',
         cnn_kernel_sizes: list = None,
         cnn_num_filters: int = 128
     ):
         super().__init__()
+        
+        self.head_type = head_type
+        self.num_labels = num_labels
         
         # Backbone: SikuBERT
         self.bert = AutoModel.from_pretrained(
@@ -195,25 +204,28 @@ class SikuBERTForTokenClassification(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(dropout)
         
-        # Extra layers
-        self.extra_layer = None
-        self.extra_layer_type = extra_layer_type
-        
-        if use_extra_layer and extra_layer_type == 'cnn':
+        # CNN layer (only for 'cnn' head type)
+        self.cnn_layer = None
+        if head_type == 'cnn':
             if cnn_kernel_sizes is None:
                 cnn_kernel_sizes = [3, 5, 7]
             
-            self.extra_layer = MultiKernelCNN(
+            self.cnn_layer = MultiKernelCNN(
                 hidden_size=self.hidden_size,
                 kernel_sizes=cnn_kernel_sizes,
                 num_filters=cnn_num_filters
             )
-            classifier_input_size = self.extra_layer.output_size
+            classifier_input_size = self.cnn_layer.output_size
         else:
             classifier_input_size = self.hidden_size
         
         # Classification head
         self.classifier = nn.Linear(classifier_input_size, num_labels)
+        
+        # CRF layer (only for 'crf' head type)
+        self.crf = None
+        if head_type == 'crf':
+            self.crf = CRF(num_labels, batch_first=True)
     
     def forward(self, input_ids, attention_mask, labels=None):
         # BERT encoding
@@ -223,21 +235,70 @@ class SikuBERTForTokenClassification(nn.Module):
         # Dropout
         sequence_output = self.dropout(sequence_output)
         
-        # Extra layer
-        if self.extra_layer is not None:
-            sequence_output = self.extra_layer(sequence_output)
+        # CNN layer (if using CNN head)
+        if self.cnn_layer is not None:
+            sequence_output = self.cnn_layer(sequence_output)
             sequence_output = self.dropout(sequence_output)
         
-        # Classification
-        logits = self.classifier(sequence_output)
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
         
-        # Calculate loss if labels provided
+        # Calculate loss and get predictions based on head type
         loss = None
-        if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.classifier.out_features), labels.view(-1))
         
-        return {'loss': loss, 'logits': logits}
+        if self.head_type == 'crf':
+            # CRF head
+            # Create mask: True for valid tokens, False for padding and special tokens
+            # labels == -100 are ignored positions (padding, [CLS], [SEP])
+            if labels is not None:
+                # Create CRF mask (True for valid, False for ignored)
+                crf_mask = (labels != -100)
+                # Replace -100 with 0 for CRF (it will be masked anyway)
+                crf_labels = labels.clone()
+                crf_labels[~crf_mask] = 0
+                # CRF forward returns negative log-likelihood
+                loss = -self.crf(emissions, crf_labels, mask=crf_mask, reduction='mean')
+            
+            return {'loss': loss, 'logits': emissions}
+        else:
+            # Softmax or CNN head (both use CrossEntropyLoss)
+            if labels is not None:
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+            
+            return {'loss': loss, 'logits': emissions}
+    
+    def decode(self, input_ids, attention_mask):
+        """Decode predictions (especially useful for CRF)
+        
+        Returns:
+            List of predicted label sequences
+        """
+        # BERT encoding
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        sequence_output = outputs.last_hidden_state
+        
+        # Dropout (in eval mode, dropout is identity)
+        sequence_output = self.dropout(sequence_output)
+        
+        # CNN layer
+        if self.cnn_layer is not None:
+            sequence_output = self.cnn_layer(sequence_output)
+            sequence_output = self.dropout(sequence_output)
+        
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
+        
+        if self.head_type == 'crf':
+            # Use Viterbi decoding for CRF
+            # Use attention_mask as the CRF mask
+            crf_mask = attention_mask.bool()
+            predictions = self.crf.decode(emissions, mask=crf_mask)
+            return predictions
+        else:
+            # Argmax for softmax/cnn heads
+            predictions = torch.argmax(emissions, dim=-1)
+            return predictions.tolist()
 
 
 # ============================================================================
@@ -747,7 +808,7 @@ def main():
     except RuntimeError:
         pass  # Already set
     
-    parser = argparse.ArgumentParser(description='Train SikuBERT with CNN')
+    parser = argparse.ArgumentParser(description='Train SikuBERT for Token Classification')
     
     # Task configuration
     parser.add_argument('--task', type=str, required=True, 
@@ -800,9 +861,14 @@ def main():
     
     # CNN configuration
     parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7],
-                       help='CNN kernel sizes')
+                       help='CNN kernel sizes (only used when head_type=cnn)')
     parser.add_argument('--cnn_num_filters', type=int, default=256,
-                       help='Number of CNN filters')
+                       help='Number of CNN filters (only used when head_type=cnn)')
+    
+    # Head type configuration
+    parser.add_argument('--head_type', type=str, default='cnn',
+                       choices=['softmax', 'crf', 'cnn'],
+                       help='Classification head type: softmax (FC only), crf (BERT+CRF), cnn (BERT+CNN)')
     
     # Output configuration
     parser.add_argument('--output_dir', type=str, default='outputs',
@@ -950,13 +1016,12 @@ def main():
     
     # Create model
     if is_main_process():
-        logger.info("✓ Creating model...")
+        logger.info(f"✓ Creating model with head_type={args.head_type}...")
     model = SikuBERTForTokenClassification(
         model_name=args.model_name,
         num_labels=task_config.num_labels,
         dropout=args.dropout,
-        use_extra_layer=True,
-        extra_layer_type='cnn',
+        head_type=args.head_type,
         cnn_kernel_sizes=args.cnn_kernel_sizes,
         cnn_num_filters=args.cnn_num_filters
     )
@@ -1025,3 +1090,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
