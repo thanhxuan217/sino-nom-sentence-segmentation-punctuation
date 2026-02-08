@@ -107,6 +107,7 @@ torchrun --nproc_per_node=$NGPUS evaluate.py \
     --dropout $DROPOUT \
     --cnn_kernel_sizes $CNN_KERNEL_SIZES \
     --cnn_num_filters $CNN_NUM_FILTERS \
+    --head_type $HEAD_TYPE \
     --batch_size $BATCH_SIZE \
     --num_workers $NUM_WORKERS \
     $FP16 \

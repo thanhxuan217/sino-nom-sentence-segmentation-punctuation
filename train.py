@@ -1046,7 +1046,7 @@ def main():
     
     # Extract train file name for checkpoint naming
     train_file_name = os.path.splitext(os.path.basename(args.train_path))[0]
-    save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_cnn.pt")
+    save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_{args.head_type}.pt")
     
     best_val_f1 = train_with_early_stopping(
         model, train_loader, val_loader,
