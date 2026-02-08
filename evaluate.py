@@ -206,6 +206,7 @@ class SikuBERTForTokenClassification(nn.Module):
         self.head_type = head_type
         self.num_labels = num_labels
         
+        # Backbone: SikuBERT
         self.bert = AutoModel.from_pretrained(
             model_name,
             use_safetensors=True,
@@ -213,6 +214,8 @@ class SikuBERTForTokenClassification(nn.Module):
         )
 
         self.hidden_size = self.bert.config.hidden_size
+        
+        # Dropout
         self.dropout = nn.Dropout(dropout)
         
         # CNN layer (only for 'cnn' head type)
@@ -230,6 +233,7 @@ class SikuBERTForTokenClassification(nn.Module):
         else:
             classifier_input_size = self.hidden_size
         
+        # Classification head
         self.classifier = nn.Linear(classifier_input_size, num_labels)
         
         # CRF layer (only for 'crf' head type)
@@ -238,13 +242,23 @@ class SikuBERTForTokenClassification(nn.Module):
             self.crf = CRF(num_labels, batch_first=True)
     
     def forward(self, input_ids, attention_mask, labels=None):
+        # BERT encoding
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         sequence_output = outputs.last_hidden_state
+        
+        # Dropout
         sequence_output = self.dropout(sequence_output)
         
+        # CNN layer (if using CNN head)
         if self.cnn_layer is not None:
             sequence_output = self.cnn_layer(sequence_output)
             sequence_output = self.dropout(sequence_output)
+        
+        # Get emission scores
+        emissions = self.classifier(sequence_output)
+        
+        # Calculate loss and get predictions based on head type
+        loss = None
         
         outputs = {'logits': emissions}
         loss = None
@@ -289,27 +303,39 @@ class SikuBERTForTokenClassification(nn.Module):
             outputs['predictions'] = torch.argmax(emissions, dim=-1)
             
         return outputs
+
     
     def decode(self, input_ids, attention_mask):
-        """Decode predictions (especially useful for CRF)"""
+        """Decode predictions (especially useful for CRF)
+        
+        Returns:
+            List of predicted label sequences
+        """
+        # BERT encoding
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         sequence_output = outputs.last_hidden_state
+        
+        # Dropout (in eval mode, dropout is identity)
         sequence_output = self.dropout(sequence_output)
         
+        # CNN layer
         if self.cnn_layer is not None:
             sequence_output = self.cnn_layer(sequence_output)
             sequence_output = self.dropout(sequence_output)
         
+        # Get emission scores
         emissions = self.classifier(sequence_output)
         
         if self.head_type == 'crf':
+            # Use Viterbi decoding for CRF
+            # Use attention_mask as the CRF mask
             crf_mask = attention_mask.bool()
             predictions = self.crf.decode(emissions, mask=crf_mask)
             return predictions
         else:
+            # Argmax for softmax/cnn heads
             predictions = torch.argmax(emissions, dim=-1)
             return predictions.tolist()
-
 
 # ============================================================================
 # UTILITY FUNCTIONS
