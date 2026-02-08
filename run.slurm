@@ -106,6 +106,7 @@ echo "Dropout: $DROPOUT"
 echo ""
 echo "CNN Kernels: $CNN_KERNEL_SIZES"
 echo "CNN Filters: $CNN_NUM_FILTERS"
+echo "Head Type: $HEAD_TYPE"
 echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "Model Save Dir: $MODEL_SAVE_DIR"
@@ -149,6 +150,7 @@ torchrun --nproc_per_node=$NGPUS train.py \
     $PERSISTENT_WORKERS \
     --cnn_kernel_sizes $CNN_KERNEL_SIZES \
     --cnn_num_filters $CNN_NUM_FILTERS \
+    --head_type $HEAD_TYPE \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
     --log_dir $LOG_DIR \
