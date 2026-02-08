@@ -3,7 +3,6 @@
 #SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.out  # Output file (absolute path)
 #SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
-#SBATCH --nodelist=gpu04                  # GPU node (idle) - must match where data is stored on /raid!
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
