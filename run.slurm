@@ -54,21 +54,6 @@ echo "=========================================="
 # module load cuda/11.8
 # module load cudnn/8.6
 
-# Activate conda environment (using prefix path from config)
-if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
-elif [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/anaconda3/etc/profile.d/conda.sh"
-elif [[ -f "/opt/conda/etc/profile.d/conda.sh" ]]; then
-    source "/opt/conda/etc/profile.d/conda.sh"
-fi
-
-if command -v conda >/dev/null 2>&1; then
-    conda activate "$CONDA_ENV"
-else
-    echo "WARNING: conda not found. Make sure your Python env is activated."
-fi
-
 # Set environment variables
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
@@ -108,6 +93,13 @@ echo "CNN Kernels: $CNN_KERNEL_SIZES"
 echo "CNN Filters: $CNN_NUM_FILTERS"
 echo "Head Type: $HEAD_TYPE"
 echo ""
+echo "Use QLoRA: ${USE_QLORA_FLAG:-False}"
+echo "LoRA Rank: $LORA_R"
+echo "LoRA Alpha: $LORA_ALPHA"
+echo "LoRA Dropout: $LORA_DROPOUT"
+echo "LoRA Target Modules: $LORA_TARGET_MODULES"
+echo "Use Streaming: ${USE_STREAMING:-False}"
+echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "Model Save Dir: $MODEL_SAVE_DIR"
 echo "=========================================="
@@ -145,12 +137,24 @@ torchrun --nproc_per_node=$NGPUS train.py \
     --early_stopping_patience $EARLY_STOPPING_PATIENCE \
     --seed $SEED \
     --num_workers $NUM_WORKERS \
+    --data_dir $DATA_DIR \
+    --max_steps $MAX_STEPS \
+    --eval_steps $EVAL_STEPS \
+    --save_steps $SAVE_STEPS \
+    --logging_steps $LOGGING_STEPS \
+    --max_eval_samples $MAX_EVAL_SAMPLES \
     $FP16 \
+    $BF16 \
     $PIN_MEMORY \
     $PERSISTENT_WORKERS \
     --cnn_kernel_sizes $CNN_KERNEL_SIZES \
     --cnn_num_filters $CNN_NUM_FILTERS \
     --head_type $HEAD_TYPE \
+    $USE_QLORA_FLAG \
+    --lora_r $LORA_R \
+    --lora_alpha $LORA_ALPHA \
+    --lora_dropout $LORA_DROPOUT \
+    --lora_target_modules $LORA_TARGET_MODULES \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
     --log_dir $LOG_DIR \

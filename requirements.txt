@@ -8,3 +8,5 @@ tqdm>=4.67.2
 accelerate>=1.12.0
 numpy>=2.4.2
 pytorch-crf>=0.7.2
+peft>=0.18.1
+bitsandbytes>=0.49.1

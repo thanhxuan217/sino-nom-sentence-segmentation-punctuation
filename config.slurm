@@ -26,15 +26,6 @@ export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datase
 # export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
 
 # ============================================================================
-# DATA PATHS
-# ============================================================================
-# Data is stored on /raid of the specific GPU node for faster I/O
-# Make sure to copy your data to the GPU node first!
-export TRAIN_PATH="${DATA_DIR}/train/segmentation_sliding_part_0.jsonl"
-export VAL_PATH="${DATA_DIR}/val/segmentation_sliding_val.jsonl"
-export TEST_PATH="${DATA_DIR}/test/segmentation_sliding_test.jsonl"
-
-# ============================================================================
 # TASK CONFIGURATION
 # ============================================================================
 # Options: "segmentation" or "punctuation"
@@ -65,6 +56,22 @@ export SEED=42
 export MAX_GRAD_NORM=1.0
 export GRADIENT_ACCUMULATION_STEPS=1
 export EARLY_STOPPING_PATIENCE=3
+export MAX_STEPS=-1
+export EVAL_STEPS=500
+export SAVE_STEPS=500
+export LOGGING_STEPS=100
+export MAX_EVAL_SAMPLES=1000
+
+# ============================================================================
+# QLORA CONFIGURATION
+# ============================================================================
+# Enable QLoRA (set to "--use_qlora" to enable, or "" to disable if default is False)
+export USE_QLORA_FLAG="--use_qlora"
+export LORA_R=16
+export LORA_ALPHA=32
+export LORA_DROPOUT=0.1
+# Space-separated list of target modules (e.g., "query key value" or "q_proj v_proj")
+export LORA_TARGET_MODULES="query key value"
 
 # ============================================================================
 # DATALOADER CONFIGURATION (Multiprocessing on Slurm)
@@ -73,6 +80,9 @@ export EARLY_STOPPING_PATIENCE=3
 export NUM_WORKERS=4
 # Enable FP16 mixed precision training (recommended for GPU)
 export FP16="--fp16"
+# Enable BF16 mixed precision training (alternative to FP16, requires Ampere+ GPU)
+# export BF16="--bf16"
+export BF16=""
 # Pin memory for faster GPU transfer
 export PIN_MEMORY="--pin_memory"
 # Persistent workers - keeps workers alive between epochs (only works when num_workers > 0)
@@ -109,4 +119,3 @@ export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/best_${TASK}_model_${HEAD_TYPE}.pt"
 # Set to empty string "" if starting fresh, or path to checkpoint to resume
 # Example: export CHECKPOINT_PATH="${MODEL_SAVE_DIR}/best_segmentation_model_cnn.pt"
 export CHECKPOINT_PATH=""
-
