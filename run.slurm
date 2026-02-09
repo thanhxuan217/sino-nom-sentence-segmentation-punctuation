@@ -121,9 +121,6 @@ fi
 
 torchrun --nproc_per_node=$NGPUS train.py \
     --task $TASK \
-    --train_path $TRAIN_PATH \
-    --val_path $VAL_PATH \
-    --test_path $TEST_PATH \
     --model_name $MODEL_NAME \
     --max_length $MAX_LENGTH \
     --batch_size $BATCH_SIZE \

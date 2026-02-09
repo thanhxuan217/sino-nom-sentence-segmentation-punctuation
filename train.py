@@ -12,6 +12,7 @@ import os
 import random
 import math
 import sys
+import pyarrow.parquet as pq
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
@@ -609,6 +610,12 @@ def main():
     parser.add_argument('--use_streaming', action='store_true', default=True,
                        help='Use streaming dataset (default: True)')
     
+    # DataLoader configuration (Extra)
+    parser.add_argument('--pin_memory', action='store_true', default=False,
+                       help='Pin memory for faster GPU transfer')
+    parser.add_argument('--persistent_workers', action='store_true', default=False,
+                       help='Keep workers alive between epochs')
+    
     # CNN configuration
     parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7])
     parser.add_argument('--cnn_num_filters', type=int, default=256)
@@ -676,6 +683,31 @@ def main():
     logger.info("\n✓ Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     
+    # Calculate max_steps if explicitly set to -1 (use num_epochs)
+    if args.max_steps == -1 and args.use_streaming:
+        logger.info("\n✓ Calculating max_steps from dataset size...")
+        try:
+            train_dir = Path(args.data_dir) / "train"
+            parquet_files = list(train_dir.glob("*.parquet"))
+            total_samples = 0
+            for pf in parquet_files:
+                meta = pq.read_metadata(pf)
+                total_samples += meta.num_rows
+            
+            # Adjust for distributed training
+            world_size = int(os.environ.get("WORLD_SIZE", 1))
+            effective_batch_size = args.batch_size * args.gradient_accumulation_steps * world_size
+            steps_per_epoch = math.ceil(total_samples / effective_batch_size)
+            
+            args.max_steps = steps_per_epoch * args.num_epochs
+            logger.info(f"  Total samples: {total_samples}")
+            logger.info(f"  Steps per epoch: {steps_per_epoch}")
+            logger.info(f"  Max steps: {args.max_steps} (for {args.num_epochs} epochs)")
+            
+        except Exception as e:
+            logger.warning(f"  Could not calculate dataset size: {e}")
+            logger.warning("  Please provide --max_steps manually if training fails.")
+
     # Load datasets
     logger.info("\n✓ Loading datasets...")
     
@@ -736,7 +768,7 @@ def main():
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         max_steps=args.max_steps,
-        num_train_epochs=args.num_epochs if args.max_steps == -1 else None,
+        num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -757,6 +789,8 @@ def main():
         metric_for_best_model="f1",
         greater_is_better=True,
         dataloader_num_workers=args.num_workers,
+        dataloader_pin_memory=args.pin_memory,
+        dataloader_persistent_workers=args.persistent_workers,
         remove_unused_columns=False,
         label_names=["labels"],
         report_to=["tensorboard"],
