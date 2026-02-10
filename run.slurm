@@ -113,10 +113,13 @@ echo ""
 NGPUS=2
 
 # Build checkpoint argument if path is set
-CHECKPOINT_ARG=""
-if [[ -n "$CHECKPOINT_PATH" && -f "$CHECKPOINT_PATH" ]]; then
+if [[ -n "$CHECKPOINT_PATH" && -d "$CHECKPOINT_PATH" ]]; then
     CHECKPOINT_ARG="--resume_from_checkpoint $CHECKPOINT_PATH"
     echo "Resuming from checkpoint: $CHECKPOINT_PATH"
+else
+    echo "Checkpoint not found or not a directory: $CHECKPOINT_PATH"
+    # Tùy chọn: Nếu muốn bắt buộc resume thì exit luôn để báo lỗi
+    # exit 1 
 fi
 
 torchrun --nproc_per_node=$NGPUS train.py \
