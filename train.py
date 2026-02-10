@@ -28,7 +28,8 @@ from transformers import (
     TrainingArguments,
     Trainer,
     DataCollatorForTokenClassification,
-    EarlyStoppingCallback
+    EarlyStoppingCallback,
+    BertForTokenClassification
 )
 from transformers.trainer_callback import TrainerCallback
 from peft import (
@@ -234,11 +235,23 @@ class SikuBERTForTokenClassification(nn.Module):
         self.crf = None
         if head_type == 'crf':
             self.crf = CRF(num_labels, batch_first=True)
-    
+
     def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, **kwargs):
-        # BERT encoding
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
-        sequence_output = outputs.last_hidden_state
+        # Chỉ lấy những gì BertModel thực sự cần
+        bert_inputs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+
+        # Một số model không dùng token_type_ids, chỉ thêm nếu có
+        if token_type_ids is not None:
+            bert_inputs["token_type_ids"] = token_type_ids
+        # Gọi BERT (đã bọc QLoRA). 
+        # Nhờ bước này, 'labels' sẽ KHÔNG bao giờ bị lọt vào trong self.bert
+
+        bert_outputs = self.bert(**bert_inputs)
+        
+        sequence_output = bert_outputs.last_hidden_state
         
         # Dropout
         sequence_output = self.dropout(sequence_output)
@@ -252,8 +265,7 @@ class SikuBERTForTokenClassification(nn.Module):
         emissions = self.classifier(sequence_output)
         
         # Calculate loss and get predictions based on head type
-        outputs = {'logits': emissions}
-        loss = None
+        result = {'logits': emissions}
         
         if self.head_type == 'crf':
             # CRF head
@@ -263,7 +275,7 @@ class SikuBERTForTokenClassification(nn.Module):
                 crf_labels[labels == -100] = 0
                 
                 loss = -self.crf(emissions, crf_labels, mask=crf_mask, reduction='mean')
-                outputs['loss'] = loss
+                result['loss'] = loss
             
             # Viterbi decoding
             crf_mask = attention_mask.bool()
@@ -276,19 +288,18 @@ class SikuBERTForTokenClassification(nn.Module):
             for i, pred_seq in enumerate(predictions):
                 pred_tensor[i, :len(pred_seq)] = torch.tensor(pred_seq, device=emissions.device)
             
-            outputs['predictions'] = pred_tensor
+            result['predictions'] = pred_tensor
 
         else:
             # Softmax or CNN head
             if labels is not None:
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
-                outputs['loss'] = loss
+                result['loss'] = loss
             
-            outputs['predictions'] = torch.argmax(emissions, dim=-1)
+            result['predictions'] = torch.argmax(emissions, dim=-1)
             
-        return outputs
-
+        return result
 
 # ============================================================================
 # STREAMING DATA UTILITIES (NEW)
@@ -746,7 +757,8 @@ def main():
             target_modules=args.lora_target_modules,
             lora_dropout=args.lora_dropout,
             bias="none",
-            task_type=TaskType.TOKEN_CLS
+            # Vì bạn dùng BERT + CNN, BERT chỉ đóng vai trò feature extractor
+            task_type=TaskType.FEATURE_EXTRACTION
         )
         logger.info(f"  LoRA rank: {args.lora_r}")
         logger.info(f"  LoRA alpha: {args.lora_alpha}")
