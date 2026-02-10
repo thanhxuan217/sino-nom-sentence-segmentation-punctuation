@@ -250,7 +250,7 @@ class SikuBERTForTokenClassification(nn.Module):
         # Nhờ bước này, 'labels' sẽ KHÔNG bao giờ bị lọt vào trong self.bert
 
         bert_outputs = self.bert(**bert_inputs)
-        
+
         sequence_output = bert_outputs.last_hidden_state
         
         # Dropout
@@ -808,6 +808,10 @@ def main():
         label_names=["labels"],
         report_to=["tensorboard"],
         seed=args.seed,
+        # [FIX QUAN TRỌNG CHO DDP + QLoRA]
+        # Tắt tính năng tự động tìm tham số không sử dụng của DDP
+        # để tránh xung đột với Gradient Checkpointing.
+        ddp_find_unused_parameters=False
     )
     
     # Data collator
