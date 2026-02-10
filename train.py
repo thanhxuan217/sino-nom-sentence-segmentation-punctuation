@@ -16,6 +16,7 @@ import pyarrow.parquet as pq
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
+from functools import partial
 
 import numpy as np
 import torch
@@ -186,7 +187,7 @@ class SikuBERTForTokenClassification(nn.Module):
             self.bert = AutoModel.from_pretrained(
                 model_name,
                 quantization_config=bnb_config,
-                device_map="auto",
+                device_map={'': int(os.environ.get('LOCAL_RANK', 0))} if int(os.environ.get("WORLD_SIZE", 1)) > 1 else "auto",
                 use_safetensors=True,
                 add_pooling_layer=False
             )
@@ -234,9 +235,9 @@ class SikuBERTForTokenClassification(nn.Module):
         if head_type == 'crf':
             self.crf = CRF(num_labels, batch_first=True)
     
-    def forward(self, input_ids, attention_mask, labels=None):
+    def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, **kwargs):
         # BERT encoding
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
         sequence_output = outputs.last_hidden_state
         
         # Dropout
@@ -719,13 +720,13 @@ def main():
     
     # Preprocess
     train_dataset = train_dataset.map(
-        lambda x: preprocess_function(x, tokenizer, task_config, args.max_length),
+        partial(preprocess_function, tokenizer=tokenizer, task_config=task_config, max_length=args.max_length),
         batched=True,
         remove_columns=train_dataset.column_names
     )
     
     val_dataset = val_dataset.map(
-        lambda x: preprocess_function(x, tokenizer, task_config, args.max_length),
+        partial(preprocess_function, tokenizer=tokenizer, task_config=task_config, max_length=args.max_length),
         batched=True,
         remove_columns=val_dataset.column_names
     )
@@ -811,7 +812,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        compute_metrics=lambda x: compute_metrics(x, task_config),
+        compute_metrics=partial(compute_metrics, task_config=task_config),
         callbacks=[
             EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience),
             LimitedEvalCallback(max_eval_samples=args.max_eval_samples)

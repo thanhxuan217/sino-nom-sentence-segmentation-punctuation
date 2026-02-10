@@ -242,9 +242,9 @@ class SikuBERTForTokenClassification(nn.Module):
         if head_type == 'crf':
             self.crf = CRF(num_labels, batch_first=True)
     
-    def forward(self, input_ids, attention_mask, labels=None):
+    def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, **kwargs):
         # BERT encoding
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
         sequence_output = outputs.last_hidden_state
         
         # Dropout
