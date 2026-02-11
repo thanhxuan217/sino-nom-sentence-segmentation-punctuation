@@ -46,9 +46,14 @@ export MASTER_PORT=29500
 # ============================================================================
 # TRAINING HYPERPARAMETERS
 # ============================================================================
+# Dataset Statistics (calculated from dataset):
+# - Total samples: 5,556,224
+# - Steps per epoch: 43,408 (with BATCH_SIZE=64 per GPU, NGPUS=2)
+# - Max steps for 5 epochs: 217,040
+
 export BATCH_SIZE=64
 export LEARNING_RATE=2e-5
-export NUM_EPOCHS=-1
+export NUM_EPOCHS=-1  # Using MAX_STEPS instead
 export WARMUP_RATIO=0.1
 export WEIGHT_DECAY=0.01
 export DROPOUT=0.1
@@ -56,10 +61,12 @@ export SEED=42
 export MAX_GRAD_NORM=1.0
 export GRADIENT_ACCUMULATION_STEPS=1
 export EARLY_STOPPING_PATIENCE=3
-export MAX_STEPS=60000
-export EVAL_STEPS=3000
-export SAVE_STEPS=5000
-export LOGGING_STEPS=100
+
+# Training steps (based on 5 epochs of dataset)
+export MAX_STEPS=217040  # 5 epochs × 43,408 steps/epoch
+export EVAL_STEPS=4341   # ~10% of one epoch (evaluate ~10 times per epoch)
+export SAVE_STEPS=8682   # ~20% of one epoch (save ~5 times per epoch)
+export LOGGING_STEPS=100 # Log every 100 steps
 export MAX_EVAL_SAMPLES=10000
 
 # ============================================================================
