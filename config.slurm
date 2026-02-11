@@ -48,7 +48,7 @@ export MASTER_PORT=29500
 # ============================================================================
 export BATCH_SIZE=64
 export LEARNING_RATE=2e-5
-export NUM_EPOCHS=5
+export NUM_EPOCHS=-1
 export WARMUP_RATIO=0.1
 export WEIGHT_DECAY=0.01
 export DROPOUT=0.1
@@ -56,11 +56,11 @@ export SEED=42
 export MAX_GRAD_NORM=1.0
 export GRADIENT_ACCUMULATION_STEPS=1
 export EARLY_STOPPING_PATIENCE=3
-export MAX_STEPS=-1
-export EVAL_STEPS=500
-export SAVE_STEPS=500
+export MAX_STEPS=60000
+export EVAL_STEPS=3000
+export SAVE_STEPS=5000
 export LOGGING_STEPS=100
-export MAX_EVAL_SAMPLES=1000
+export MAX_EVAL_SAMPLES=10000
 
 # ============================================================================
 # QLORA CONFIGURATION

@@ -22,10 +22,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from datasets import load_dataset, Dataset, IterableDataset
-import transformers.utils.import_utils
-# [FIX] Bypass lỗi bảo mật torch.load khi resume checkpoint trên PyTorch cũ
-# Chỉ dùng khi bạn tin tưởng checkpoint mình đang load (do chính mình train)
-transformers.utils.import_utils.check_torch_load_is_safe = lambda: None
 
 from transformers import (
     AutoModel, 
