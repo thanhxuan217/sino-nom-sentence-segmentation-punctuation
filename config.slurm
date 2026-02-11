@@ -84,7 +84,7 @@ export LORA_TARGET_MODULES="query key value"
 # DATALOADER CONFIGURATION (Multiprocessing on Slurm)
 # ============================================================================
 # Number of DataLoader workers (adjust based on CPU cores allocated)
-export NUM_WORKERS=4
+export NUM_WORKERS=2
 # Enable FP16 mixed precision training (recommended for GPU)
 export FP16="--fp16"
 # Enable BF16 mixed precision training (alternative to FP16, requires Ampere+ GPU)

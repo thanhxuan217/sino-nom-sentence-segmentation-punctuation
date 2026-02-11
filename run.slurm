@@ -8,8 +8,8 @@
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
 #SBATCH --gres=gpu:2                      # Number of GPUs (change as needed)
-#SBATCH --mem=64G                         # Memory per node (max 64GB per server rules)
-#SBATCH --time=48:00:00                   # Time limit (max 48h per server rules)
+#SBATCH --mem=32G                         # Memory per node (max 64GB per server rules)
+#SBATCH --time=24:00:00                   # Time limit (max 48h per server rules)
 #SBATCH --mail-type=BEGIN,END,FAIL        # Email notifications
 #SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
 
