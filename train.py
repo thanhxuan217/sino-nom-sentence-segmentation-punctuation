@@ -843,6 +843,9 @@ def main():
         remove_unused_columns=False,
         label_names=["labels"],
         report_to=["tensorboard"],
+        disable_tqdm=False,  # Hiển thị progress bar trên console
+        log_level="info",  # In training metrics (loss, lr) ra console real-time
+        logging_first_step=True,  # In metrics ngay từ step đầu tiên
         seed=args.seed,
         # [FIX QUAN TRỌNG CHO DDP + QLoRA]
         # Tắt tính năng tự động tìm tham số không sử dụng của DDP
