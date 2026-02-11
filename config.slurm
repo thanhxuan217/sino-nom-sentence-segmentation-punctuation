@@ -41,7 +41,7 @@ export MAX_LENGTH=256
 # DISTRIBUTED TRAINING (Multi-GPU)
 # ============================================================================
 export NGPUS=2
-export MASTER_PORT=29500
+export MASTER_PORT=29501
 
 # ============================================================================
 # TRAINING HYPERPARAMETERS
