@@ -118,8 +118,7 @@ if [[ -n "$CHECKPOINT_PATH" && -d "$CHECKPOINT_PATH" ]]; then
     echo "Resuming from checkpoint: $CHECKPOINT_PATH"
 else
     echo "Checkpoint not found or not a directory: $CHECKPOINT_PATH"
-    # Tùy chọn: Nếu muốn bắt buộc resume thì exit luôn để báo lỗi
-    # exit 1 
+    exit 1
 fi
 
 torchrun --nproc_per_node=$NGPUS train.py \
