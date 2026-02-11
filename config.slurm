@@ -22,8 +22,8 @@ export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 # IMPORTANT: Change GPU_NODE to match the node where your data is stored!
 # Run 'sinfo -N' to see available nodes
 export GPU_NODE="gpu04"  # Available: gpu01, gpu02, gpu03, gpu04
-export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
-# export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
+# export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
+export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
 
 # ============================================================================
 # TASK CONFIGURATION

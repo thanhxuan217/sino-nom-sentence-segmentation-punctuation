@@ -128,7 +128,7 @@ else
     echo "No checkpoint specified or checkpoint not found: $CHECKPOINT_PATH"
 fi
 
-torchrun --nproc_per_node=$NGPUS train.py \
+torchrun --nproc_per_node=$NGPUS --master_port=0 train.py \
     --task $TASK \
     --model_name $MODEL_NAME \
     --max_length $MAX_LENGTH \
