@@ -1,9 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
-#SBATCH --nodelist=gpu04                  # GPU node (idle) - must match where data is stored on /raid!
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
@@ -54,6 +53,16 @@ echo "=========================================="
 # module load cuda/11.8
 # module load cudnn/8.6
 
+# Activate conda environment
+echo "Activating conda environment..."
+source /media02/ddien02/datnd/miniconda3/etc/profile.d/conda.sh
+conda activate /media02/ddien02/thanhxuan217/envs/sikubert
+
+echo "Conda environment activated: $CONDA_DEFAULT_ENV"
+echo "Python path: $(which python)"
+echo "Python version: $(python --version)"
+echo ""
+
 # Set environment variables
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
@@ -78,9 +87,7 @@ echo "TRAINING CONFIGURATION"
 echo "=========================================="
 echo "Task: $TASK"
 echo "Model: $MODEL_NAME"
-echo "Train Path: $TRAIN_PATH"
-echo "Val Path: $VAL_PATH"
-echo "Test Path: $TEST_PATH"
+echo "Data Directory: $DATA_DIR"
 echo ""
 echo "Batch Size: $BATCH_SIZE"
 echo "Learning Rate: $LEARNING_RATE"
@@ -117,8 +124,8 @@ if [[ -n "$CHECKPOINT_PATH" && -d "$CHECKPOINT_PATH" ]]; then
     CHECKPOINT_ARG="--resume_from_checkpoint $CHECKPOINT_PATH"
     echo "Resuming from checkpoint: $CHECKPOINT_PATH"
 else
-    echo "Checkpoint not found or not a directory: $CHECKPOINT_PATH"
-    exit 1
+    CHECKPOINT_ARG=""
+    echo "No checkpoint specified or checkpoint not found: $CHECKPOINT_PATH"
 fi
 
 torchrun --nproc_per_node=$NGPUS train.py \
