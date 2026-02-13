@@ -67,7 +67,7 @@ export MAX_STEPS=217040  # 5 epochs 43,408 steps/epoch
 export EVAL_STEPS=4341   # ~10% of one epoch (evaluate ~10 times per epoch)
 export SAVE_STEPS=8682   # ~20% of one epoch (save ~5 times per epoch)
 export LOGGING_STEPS=50 # Log every 100 steps
-export MAX_EVAL_SAMPLES=10000
+export MAX_EVAL_SAMPLES=6000  # Reduced to prevent OOM during evaluation
 
 # ============================================================================
 # QLORA CONFIGURATION
@@ -84,7 +84,8 @@ export LORA_TARGET_MODULES="query key value"
 # DATALOADER CONFIGURATION (Multiprocessing on Slurm)
 # ============================================================================
 # Number of DataLoader workers (adjust based on CPU cores allocated)
-export NUM_WORKERS=2
+# NOTE: Set to 0 to avoid OOM issues with streaming datasets and limited shards
+export NUM_WORKERS=0
 # Enable FP16 mixed precision training (recommended for GPU)
 export FP16="--fp16"
 # Enable BF16 mixed precision training (alternative to FP16, requires Ampere+ GPU)
@@ -93,7 +94,8 @@ export BF16=""
 # Pin memory for faster GPU transfer
 export PIN_MEMORY="--pin_memory"
 # Persistent workers - keeps workers alive between epochs (only works when num_workers > 0)
-export PERSISTENT_WORKERS="--persistent_workers"
+# NOTE: Disabled when NUM_WORKERS=0
+export PERSISTENT_WORKERS=""
 
 # ============================================================================
 # CNN CONFIGURATION
@@ -117,8 +119,12 @@ export LOG_DIR="${WORKING_DIR}/logs"
 # ============================================================================
 # EVALUATION CONFIGURATION
 # ============================================================================
-# Path to the trained model for evaluation
-export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/best_${TASK}_model_${HEAD_TYPE}.pt"
+
+# Path to the trained model checkpoint for evaluation
+# For Trainer checkpoints: point to the checkpoint DIRECTORY (e.g., outputs/checkpoint-XXXX)
+# For legacy .pt files: point to the .pt file directly
+# UPDATE THIS to your actual best checkpoint path!
+export EVAL_MODEL_PATH="${OUTPUT_DIR}/checkpoint-best"
 
 # ============================================================================
 # MULTI-PHASE TRAINING (Resume from checkpoint)
