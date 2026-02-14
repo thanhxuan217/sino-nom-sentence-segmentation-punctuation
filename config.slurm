@@ -124,7 +124,7 @@ export LOG_DIR="${WORKING_DIR}/logs"
 # For Trainer checkpoints: point to the checkpoint DIRECTORY (e.g., outputs/checkpoint-XXXX)
 # For legacy .pt files: point to the .pt file directly
 # UPDATE THIS to your actual best checkpoint path!
-export EVAL_MODEL_PATH="${OUTPUT_DIR}/checkpoint-best"
+export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/final_segmentation_model_cnn"
 
 # ============================================================================
 # MULTI-PHASE TRAINING (Resume from checkpoint)

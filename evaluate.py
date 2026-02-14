@@ -40,6 +40,13 @@ from sklearn.metrics import (
 
 
 # ============================================================================
+# CONSTANTS
+# ============================================================================
+
+TASK = "test"
+
+
+# ============================================================================
 # CONFIGURATION CLASSES
 # ============================================================================
 
@@ -75,7 +82,7 @@ class TaskConfig:
 def setup_ddp(rank: int, world_size: int):
     """Initialize distributed process group"""
     os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', 'localhost')
-    os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29500')
+    os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29502')
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
@@ -97,7 +104,7 @@ def is_main_process():
 # STREAMING DATA UTILITIES (Matches train.py)
 # ============================================================================
 
-def load_streaming_dataset(data_dir: str, split: str = "test"):
+def load_streaming_dataset(data_dir: str, split: str = TASK):
     """Load dataset from multiple parquet files
     
     Args:
@@ -119,9 +126,9 @@ def load_streaming_dataset(data_dir: str, split: str = "test"):
     
     dataset = hf_load_dataset(
         "parquet",
-        data_files={"test": [str(f) for f in parquet_files]},
+        data_files={TASK: [str(f) for f in parquet_files]},
         streaming=True
-    )["test"]
+    )[TASK]
     
     return dataset
 
@@ -631,6 +638,7 @@ def run_test_set_ddp(
     dataloader,
     output_path: str,
     max_length: int = 256,
+    max_samples: int = 100,
     logger=None
 ):
     """Run predictions on test set with DDP support.
@@ -639,6 +647,10 @@ def run_test_set_ddp(
     Rank 0 merges all temp files into the final output after inference.
     Raw text and labels are obtained from the batch (raw_text, raw_labels keys)
     instead of random-accessing a dataset, to support streaming.
+    
+    Args:
+        max_samples: Maximum number of samples to process. Set to None to run all.
+                     Default is 100 for quick output inspection.
     """
     import tempfile
     
@@ -654,6 +666,9 @@ def run_test_set_ddp(
     sample_results = []  # Keep only first 3 samples for logging
     total_written = 0
     global_sample_idx = 0  # Global counter for sample indexing
+    
+    if max_samples is not None and is_main_process() and logger:
+        logger.info(f"  ⚠ Limiting predictions to {max_samples} samples")
     
     with open(tmp_path, "w", encoding="utf-8") as tmp_f:
         with torch.no_grad():
@@ -723,6 +738,10 @@ def run_test_set_ddp(
                     # Keep first 3 for sample logging (tiny overhead)
                     if len(sample_results) < 3:
                         sample_results.append(result)
+                    
+                    # Early exit if max_samples reached
+                    if max_samples is not None and total_written >= max_samples:
+                        break
                 
                 global_sample_idx += batch_size
                 
@@ -730,6 +749,10 @@ def run_test_set_ddp(
                 del outputs, input_ids, attention_mask, predictions
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                
+                # Break outer batch loop too
+                if max_samples is not None and total_written >= max_samples:
+                    break
     
     if logger:
         logger.info(f"  Rank {rank}: wrote {total_written} predictions to temp file")
@@ -885,7 +908,7 @@ def main():
         dist.barrier()
     
     # Setup logging
-    log_file = os.path.join(args.log_dir, f"evaluate_{args.task}.log")
+    log_file = os.path.join(args.log_dir, f"{TASK}_evaluate_{args.task}.log")
     if is_main_process():
         logging.basicConfig(
             level=logging.INFO,
@@ -1083,7 +1106,7 @@ def main():
         logger.info("RUNNING PREDICTIONS ON TEST SET")
         logger.info("="*70)
     
-    predictions_path = os.path.join(args.output_dir, f"{args.task}_predictions.json")
+    predictions_path = os.path.join(args.output_dir, f"{TASK}_{args.task}_predictions.json")
     
     # Re-create streaming dataset + DataLoader (IterableDataset can only be iterated once)
     pred_raw_dataset = load_streaming_dataset(args.data_dir, args.test_split)
@@ -1123,7 +1146,7 @@ def main():
             'config': vars(args)
         }
         
-        results_path = os.path.join(args.output_dir, f"{args.task}_eval_results.json")
+        results_path = os.path.join(args.output_dir, f"{TASK}_{args.task}_eval_results.json")
         with open(results_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         
