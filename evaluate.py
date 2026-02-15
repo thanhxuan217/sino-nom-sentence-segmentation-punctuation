@@ -1100,39 +1100,40 @@ def main():
                 metrics['support']
             ))
     
-    # Run predictions on test set
-    if is_main_process():
-        logger.info("\n" + "="*70)
-        logger.info("RUNNING PREDICTIONS ON TEST SET")
-        logger.info("="*70)
-    
-    predictions_path = os.path.join(args.output_dir, f"{TASK}_{args.task}_predictions.json")
-    
-    # Re-create streaming dataset + DataLoader (IterableDataset can only be iterated once)
-    pred_raw_dataset = load_streaming_dataset(args.data_dir, args.test_split)
-    pred_tokenized = pred_raw_dataset.map(
-        partial(preprocess_function, tokenizer=tokenizer, task_config=task_config, max_length=args.max_length),
-        batched=True,
-        remove_columns=["text", "labels"]
-    )
-    pred_loader = DataLoader(
-        pred_tokenized,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        collate_fn=streaming_collate_fn
-    )
-    
-    run_test_set_ddp(
-        model=model,
-        tokenizer=tokenizer,
-        config=task_config,
-        device=device,
-        dataloader=pred_loader,
-        output_path=predictions_path,
-        max_length=args.max_length,
-        logger=logger if is_main_process() else None
-    )
+    if TASK != "val":
+        # Run predictions on test set
+        if is_main_process():
+            logger.info("\n" + "="*70)
+            logger.info("RUNNING PREDICTIONS ON TEST SET")
+            logger.info("="*70)
+        
+        predictions_path = os.path.join(args.output_dir, f"{TASK}_{args.task}_predictions.json")
+        
+        # Re-create streaming dataset + DataLoader (IterableDataset can only be iterated once)
+        pred_raw_dataset = load_streaming_dataset(args.data_dir, args.test_split)
+        pred_tokenized = pred_raw_dataset.map(
+            partial(preprocess_function, tokenizer=tokenizer, task_config=task_config, max_length=args.max_length),
+            batched=True,
+            remove_columns=["text", "labels"]
+        )
+        pred_loader = DataLoader(
+            pred_tokenized,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            collate_fn=streaming_collate_fn
+        )
+        
+        run_test_set_ddp(
+            model=model,
+            tokenizer=tokenizer,
+            config=task_config,
+            device=device,
+            dataloader=pred_loader,
+            output_path=predictions_path,
+            max_length=args.max_length,
+            logger=logger if is_main_process() else None
+        )
     
     # Save results (only main process)
     if is_main_process():
