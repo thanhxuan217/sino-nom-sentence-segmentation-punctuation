@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
 #SBATCH --gres=gpu:2                      # Number of GPUs (change as needed)
-#SBATCH --mem=64G                         # Memory per node (max 64GB per server rules)
-#SBATCH --time=48:00:00                   # Time limit (max 48h per server rules)
+#SBATCH --mem=32G                         # Memory per node (max 64GB per server rules)
+#SBATCH --time=24:00:00                   # Time limit (max 48h per server rules)
 #SBATCH --mail-type=BEGIN,END,FAIL        # Email notifications
 #SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
 
@@ -53,20 +53,15 @@ echo "=========================================="
 # module load cuda/11.8
 # module load cudnn/8.6
 
-# Activate conda environment (using prefix path from config)
-if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
-elif [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/anaconda3/etc/profile.d/conda.sh"
-elif [[ -f "/opt/conda/etc/profile.d/conda.sh" ]]; then
-    source "/opt/conda/etc/profile.d/conda.sh"
-fi
+# Activate conda environment
+echo "Activating conda environment..."
+source /media02/ddien02/datnd/miniconda3/etc/profile.d/conda.sh
+conda activate /media02/ddien02/thanhxuan217/envs/sikubert
 
-if command -v conda >/dev/null 2>&1; then
-    conda activate "$CONDA_ENV"
-else
-    echo "WARNING: conda not found. Make sure your Python env is activated."
-fi
+echo "Conda environment activated: $CONDA_DEFAULT_ENV"
+echo "Python path: $(which python)"
+echo "Python version: $(python --version)"
+echo ""
 
 # Set environment variables
 export PYTHONUNBUFFERED=1
@@ -92,9 +87,7 @@ echo "TRAINING CONFIGURATION"
 echo "=========================================="
 echo "Task: $TASK"
 echo "Model: $MODEL_NAME"
-echo "Train Path: $TRAIN_PATH"
-echo "Val Path: $VAL_PATH"
-echo "Test Path: $TEST_PATH"
+echo "Data Directory: $DATA_DIR"
 echo ""
 echo "Batch Size: $BATCH_SIZE"
 echo "Learning Rate: $LEARNING_RATE"
@@ -106,6 +99,13 @@ echo ""
 echo "CNN Kernels: $CNN_KERNEL_SIZES"
 echo "CNN Filters: $CNN_NUM_FILTERS"
 echo "Head Type: $HEAD_TYPE"
+echo ""
+echo "Use QLoRA: ${USE_QLORA_FLAG:-True}"
+echo "LoRA Rank: $LORA_R"
+echo "LoRA Alpha: $LORA_ALPHA"
+echo "LoRA Dropout: $LORA_DROPOUT"
+echo "LoRA Target Modules: $LORA_TARGET_MODULES"
+echo "Use Streaming: ${USE_STREAMING:-True}"
 echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "Model Save Dir: $MODEL_SAVE_DIR"
@@ -120,17 +120,16 @@ echo ""
 NGPUS=2
 
 # Build checkpoint argument if path is set
-CHECKPOINT_ARG=""
-if [[ -n "$CHECKPOINT_PATH" && -f "$CHECKPOINT_PATH" ]]; then
+if [[ -n "$CHECKPOINT_PATH" && -d "$CHECKPOINT_PATH" ]]; then
     CHECKPOINT_ARG="--resume_from_checkpoint $CHECKPOINT_PATH"
     echo "Resuming from checkpoint: $CHECKPOINT_PATH"
+else
+    CHECKPOINT_ARG=""
+    echo "No checkpoint specified or checkpoint not found: $CHECKPOINT_PATH"
 fi
 
-torchrun --nproc_per_node=$NGPUS train.py \
+torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --task $TASK \
-    --train_path $TRAIN_PATH \
-    --val_path $VAL_PATH \
-    --test_path $TEST_PATH \
     --model_name $MODEL_NAME \
     --max_length $MAX_LENGTH \
     --batch_size $BATCH_SIZE \
@@ -144,12 +143,24 @@ torchrun --nproc_per_node=$NGPUS train.py \
     --early_stopping_patience $EARLY_STOPPING_PATIENCE \
     --seed $SEED \
     --num_workers $NUM_WORKERS \
+    --data_dir $DATA_DIR \
+    --max_steps $MAX_STEPS \
+    --eval_steps $EVAL_STEPS \
+    --save_steps $SAVE_STEPS \
+    --logging_steps $LOGGING_STEPS \
+    --max_eval_samples $MAX_EVAL_SAMPLES \
     $FP16 \
+    $BF16 \
     $PIN_MEMORY \
     $PERSISTENT_WORKERS \
     --cnn_kernel_sizes $CNN_KERNEL_SIZES \
     --cnn_num_filters $CNN_NUM_FILTERS \
     --head_type $HEAD_TYPE \
+    $USE_QLORA_FLAG \
+    --lora_r $LORA_R \
+    --lora_alpha $LORA_ALPHA \
+    --lora_dropout $LORA_DROPOUT \
+    --lora_target_modules $LORA_TARGET_MODULES \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
     --log_dir $LOG_DIR \

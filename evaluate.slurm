@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_eval           # Job name
-#SBATCH --output=/media02/ddien02/thanhxuan217/main_src/logs/eval_%j.out  # Output file
-#SBATCH --error=/media02/ddien02/thanhxuan217/main_src/logs/eval_%j.err   # Error file
+#SBATCH --output=logs/eval_%j.out  # Output file
+#SBATCH --error=logs/eval_%j.err   # Error file
 #SBATCH --partition=batch                  # Partition name
 #SBATCH --nodes=1                          # Number of nodes
 #SBATCH --ntasks=1                         # Number of tasks
 #SBATCH --cpus-per-task=16                 # CPUs per task
 #SBATCH --gres=gpu:2                       # 2 GPUs for parallel inference
-#SBATCH --mem=64G                          # Memory per node
-#SBATCH --time=8:00:00                     # Time limit
+#SBATCH --mem=16G                          # Memory per node
+#SBATCH --time=10:00:00                     # Time limit
 #SBATCH --mail-type=BEGIN,END,FAIL         # Email notifications
 #SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
 
@@ -44,20 +44,16 @@ echo "Start Time: $(date)"
 echo "=========================================="
 
 # Activate conda environment
-if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
-elif [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/anaconda3/etc/profile.d/conda.sh"
-elif [[ -f "/opt/conda/etc/profile.d/conda.sh" ]]; then
-    source "/opt/conda/etc/profile.d/conda.sh"
-fi
+echo "Activating conda environment..."
+source /media02/ddien02/datnd/miniconda3/etc/profile.d/conda.sh
+conda activate /media02/ddien02/thanhxuan217/envs/sikubert
 
-if command -v conda >/dev/null 2>&1; then
-    conda activate "$CONDA_ENV"
-else
-    echo "WARNING: conda not found. Make sure your Python env is activated."
-fi
+echo "Conda environment activated: $CONDA_DEFAULT_ENV"
+echo "Python path: $(which python)"
+echo "Python version: $(python --version)"
+echo ""
 
+# Set environment variables
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
@@ -81,10 +77,17 @@ echo "=========================================="
 echo "Task: $TASK"
 echo "Model: $MODEL_NAME"
 echo "Model Path: $EVAL_MODEL_PATH"
-echo "Test Path: $TEST_PATH"
+echo "Data Dir: $DATA_DIR"
 echo ""
 echo "CNN Kernels: $CNN_KERNEL_SIZES"
 echo "CNN Filters: $CNN_NUM_FILTERS"
+echo "Head Type: $HEAD_TYPE"
+echo ""
+echo "Use QLoRA: ${USE_QLORA_FLAG:-disabled}"
+echo "LoRA Rank: $LORA_R"
+echo "LoRA Alpha: $LORA_ALPHA"
+echo "LoRA Dropout: $LORA_DROPOUT"
+echo "LoRA Target Modules: $LORA_TARGET_MODULES"
 echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "=========================================="
@@ -97,10 +100,10 @@ echo ""
 # Number of GPUs
 NGPUS=2
 
-torchrun --nproc_per_node=$NGPUS evaluate.py \
+torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
     --task $TASK \
     --model_path $EVAL_MODEL_PATH \
-    --test_path $TEST_PATH \
+    --data_dir $DATA_DIR \
     --model_name $MODEL_NAME \
     --max_length $MAX_LENGTH \
     --dropout $DROPOUT \
@@ -111,6 +114,11 @@ torchrun --nproc_per_node=$NGPUS evaluate.py \
     --num_workers $NUM_WORKERS \
     $FP16 \
     $PIN_MEMORY \
+    $USE_QLORA_FLAG \
+    --lora_r $LORA_R \
+    --lora_alpha $LORA_ALPHA \
+    --lora_dropout $LORA_DROPOUT \
+    --lora_target_modules $LORA_TARGET_MODULES \
     --output_dir $OUTPUT_DIR \
     --log_dir $LOG_DIR
 

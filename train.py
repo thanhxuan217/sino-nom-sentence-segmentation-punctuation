@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SikuBERT Fine-tuning with CNN for Token Classification
-Converted from Jupyter notebook for SLURM execution
+SikuBERT Fine-tuning with QLoRA for Token Classification
+Enhanced version with streaming data and HuggingFace Trainer
 """
 
 import argparse
@@ -12,25 +12,39 @@ import os
 import random
 import math
 import sys
+import pyarrow.parquet as pq
 from dataclasses import dataclass
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
+from pathlib import Path
+from functools import partial
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.distributed import DistributedSampler
-from transformers import AutoModel, AutoTokenizer
+from datasets import load_dataset, Dataset, IterableDataset
+
+from transformers import (
+    AutoModel, 
+    AutoTokenizer,
+    TrainingArguments,
+    Trainer,
+    DataCollatorForTokenClassification,
+    EarlyStoppingCallback,
+    BertForTokenClassification
+)
+from transformers.trainer_callback import TrainerCallback
+from peft import (
+    LoraConfig,
+    get_peft_model,
+    prepare_model_for_kbit_training,
+    TaskType
+)
 from torchcrf import CRF
 from tqdm import tqdm
-from sklearn.metrics import precision_recall_fscore_support
-from sklearn.metrics import confusion_matrix
-
+from sklearn.metrics import precision_recall_fscore_support, confusion_matrix, classification_report
 
 # ============================================================================
-# CONFIGURATION CLASSES
+# CONFIGURATION CLASSES (Keep existing for compatibility)
 # ============================================================================
 
 @dataclass
@@ -60,7 +74,7 @@ class TaskConfig:
 
 @dataclass
 class TrainingConfig:
-    """Training hyperparameters"""
+    """Training hyperparameters - Extended version"""
     model_name: str = "SIKU-BERT/sikubert"
     max_length: int = 256
 
@@ -73,8 +87,17 @@ class TrainingConfig:
     dropout: float = 0.1
     max_grad_norm: float = 1.0
 
+    # Step-based training (NEW)
+    max_steps: int = -1  # -1 means use num_epochs instead
+    eval_steps: int = 500  # Evaluate every N steps
+    save_steps: int = 500  # Save checkpoint every N steps
+    logging_steps: int = 100  # Log every N steps
+    
+    # Eval strategy (NEW)
+    max_eval_samples: int = 1000  # Max samples for intermediate evaluation
+    
     # Early stopping
-    early_stopping_patience: int = 3
+    early_stopping_patience: int = 10  # Changed from 3 to 10
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42
     gradient_accumulation_steps: int = 1
@@ -84,73 +107,25 @@ class TrainingConfig:
     persistent_workers: bool = True
     head_type: str = "cnn"
     output_dir: str = "outputs"
+    
+    # QLoRA configuration (NEW)
+    use_qlora: bool = True
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.1
+    lora_target_modules: List[str] = None
+    use_4bit: bool = True
+    bnb_4bit_compute_dtype: str = "float16"
+    bnb_4bit_quant_type: str = "nf4"
+    use_nested_quant: bool = True
+    
+    # Streaming configuration (NEW)
+    use_streaming: bool = True
+    streaming_buffer_size: int = 10000
 
 
 # ============================================================================
-# DATASET CLASS
-# ============================================================================
-
-class ClassicalChineseDataset(Dataset):
-    """Dataset for token classification tasks"""
-    
-    def __init__(
-        self,
-        texts: List[str],
-        labels: List[List[str]],
-        tokenizer,
-        config: TaskConfig,
-        max_length: int = 256
-    ):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.config = config
-        self.max_length = max_length
-        
-        # Validate data
-        assert len(texts) == len(labels), "texts and labels must have same length"
-        for text, label_seq in zip(texts, labels):
-            assert len(text) == len(label_seq), \
-                f"Text and labels mismatch: {len(text)} vs {len(label_seq)}"
-    
-    def __len__(self):
-        return len(self.texts)
-    
-    def __getitem__(self, idx):
-        text = self.texts[idx]
-        label_seq = self.labels[idx]
-        
-        # Tokenize with word tracking
-        tokenized = self.tokenizer(
-            list(text),
-            is_split_into_words=True,
-            max_length=self.max_length,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'
-        )
-        
-        # Align labels with subword tokens
-        word_ids = tokenized.word_ids(batch_index=0)
-        label_ids = []
-        
-        for word_id in word_ids:
-            if word_id is None:
-                # [CLS], [SEP], [PAD] -> -100 (ignored by loss)
-                label_ids.append(-100)
-            else:
-                label = label_seq[word_id]
-                label_ids.append(self.config.label2id[label])
-        
-        return {
-            'input_ids': tokenized['input_ids'].squeeze(0),
-            'attention_mask': tokenized['attention_mask'].squeeze(0),
-            'labels': torch.tensor(label_ids, dtype=torch.long)
-        }
-
-
-# ============================================================================
-# MODEL ARCHITECTURE
+# MODEL ARCHITECTURE (Keep existing classes)
 # ============================================================================
 
 class MultiKernelCNN(nn.Module):
@@ -188,19 +163,50 @@ class SikuBERTForTokenClassification(nn.Module):
         dropout: float = 0.1,
         head_type: str = 'softmax',
         cnn_kernel_sizes: list = None,
-        cnn_num_filters: int = 128
+        cnn_num_filters: int = 128,
+        use_qlora: bool = False,
+        qlora_config: Optional[LoraConfig] = None
     ):
         super().__init__()
         
         self.head_type = head_type
         self.num_labels = num_labels
+        self.use_qlora = use_qlora
         
         # Backbone: SikuBERT
-        self.bert = AutoModel.from_pretrained(
-            model_name,
-            use_safetensors=True,
-            add_pooling_layer=False
-        )
+        if use_qlora and qlora_config is not None:
+            # Load model in 4-bit for QLoRA
+            from transformers import BitsAndBytesConfig
+            
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True
+            )
+            
+            self.bert = AutoModel.from_pretrained(
+                model_name,
+                quantization_config=bnb_config,
+                device_map={'': int(os.environ.get('LOCAL_RANK', 0))} if int(os.environ.get("WORLD_SIZE", 1)) > 1 else "auto",
+                use_safetensors=True,
+                add_pooling_layer=False
+            )
+            
+            # Prepare for k-bit training
+            self.bert = prepare_model_for_kbit_training(self.bert)
+            
+            # Apply LoRA
+            self.bert = get_peft_model(self.bert, qlora_config)
+            
+            if hasattr(self.bert, 'print_trainable_parameters'):
+                self.bert.print_trainable_parameters()
+        else:
+            self.bert = AutoModel.from_pretrained(
+                model_name,
+                use_safetensors=True,
+                add_pooling_layer=False
+            )
 
         self.hidden_size = self.bert.config.hidden_size
         
@@ -229,11 +235,23 @@ class SikuBERTForTokenClassification(nn.Module):
         self.crf = None
         if head_type == 'crf':
             self.crf = CRF(num_labels, batch_first=True)
-    
-    def forward(self, input_ids, attention_mask, labels=None):
-        # BERT encoding
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        sequence_output = outputs.last_hidden_state
+
+    def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, **kwargs):
+        # Chỉ lấy những gì BertModel thực sự cần
+        bert_inputs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+
+        # Một số model không dùng token_type_ids, chỉ thêm nếu có
+        if token_type_ids is not None:
+            bert_inputs["token_type_ids"] = token_type_ids
+        # Gọi BERT (đã bọc QLoRA). 
+        # Nhờ bước này, 'labels' sẽ KHÔNG bao giờ bị lọt vào trong self.bert
+
+        bert_outputs = self.bert(**bert_inputs)
+
+        sequence_output = bert_outputs.last_hidden_state
         
         # Dropout
         sequence_output = self.dropout(sequence_output)
@@ -247,31 +265,22 @@ class SikuBERTForTokenClassification(nn.Module):
         emissions = self.classifier(sequence_output)
         
         # Calculate loss and get predictions based on head type
-        loss = None
-        
-        outputs = {'logits': emissions}
-        loss = None
+        result = {'logits': emissions}
         
         if self.head_type == 'crf':
             # CRF head
             if labels is not None:
-                # Use attention_mask as CRF mask (ensures first token is masked in)
                 crf_mask = attention_mask.bool()
-                
-                # Replace -100 with 0 for CRF (will be ignored by mask effectively, but needed for input validity)
-                # Note: labels might have -100 at [CLS] which is masked IN by attention_mask, so we must have valid label there.
                 crf_labels = labels.clone()
                 crf_labels[labels == -100] = 0
                 
-                # CRF forward returns negative log-likelihood
                 loss = -self.crf(emissions, crf_labels, mask=crf_mask, reduction='mean')
-                outputs['loss'] = loss
+                result['loss'] = loss
             
             # Viterbi decoding
             crf_mask = attention_mask.bool()
             predictions = self.crf.decode(emissions, mask=crf_mask)
             
-            # Convert list of lists to tensor (padding with -100)
             max_len = emissions.size(1)
             batch_size = emissions.size(0)
             pred_tensor = torch.full((batch_size, max_len), -100, dtype=torch.long, device=emissions.device)
@@ -279,56 +288,174 @@ class SikuBERTForTokenClassification(nn.Module):
             for i, pred_seq in enumerate(predictions):
                 pred_tensor[i, :len(pred_seq)] = torch.tensor(pred_seq, device=emissions.device)
             
-            outputs['predictions'] = pred_tensor
+            result['predictions'] = pred_tensor
 
         else:
-            # Softmax or CNN head (both use CrossEntropyLoss)
+            # Softmax or CNN head
             if labels is not None:
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
-                outputs['loss'] = loss
+                result['loss'] = loss
             
-            # Argmax for softmax/cnn heads
-            outputs['predictions'] = torch.argmax(emissions, dim=-1)
+            result['predictions'] = torch.argmax(emissions, dim=-1)
             
-        return outputs
+        return result
 
+# ============================================================================
+# STREAMING DATA UTILITIES (NEW)
+# ============================================================================
+
+def load_streaming_dataset(data_dir: str, split: str = "train"):
+    """Load dataset from multiple parquet files in streaming mode
     
-    def decode(self, input_ids, attention_mask):
-        """Decode predictions (especially useful for CRF)
+    Args:
+        data_dir: Directory containing parquet files (e.g., data/train/*.parquet)
+        split: Split name (train/val/test)
+    
+    Returns:
+        IterableDataset or Dataset
+    """
+    data_path = Path(data_dir) / split
+    
+    if not data_path.exists():
+        raise ValueError(f"Data directory not found: {data_path}")
+    
+    parquet_files = list(data_path.glob("*.parquet"))
+    
+
+    dataset = load_dataset(
+        "parquet",
+        data_files={"train": [str(f) for f in parquet_files]},
+        streaming=True
+    )["train"]
+    
+    return dataset
+
+
+def preprocess_function(examples, tokenizer, task_config, max_length=256):
+    """Preprocess function for token classification
+    
+    Compatible with both streaming and regular datasets
+    """
+    tokenized_inputs = tokenizer(
+        [list(text) for text in examples["text"]],
+        is_split_into_words=True,
+        max_length=max_length,
+        padding='max_length',
+        truncation=True,
+    )
+    
+    labels = []
+    for i, label_seq in enumerate(examples["labels"]):
+        word_ids = tokenized_inputs.word_ids(batch_index=i)
+        label_ids = []
         
-        Returns:
-            List of predicted label sequences
-        """
-        # BERT encoding
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        sequence_output = outputs.last_hidden_state
+        for word_id in word_ids:
+            if word_id is None:
+                label_ids.append(-100)
+            else:
+                label = label_seq[word_id]
+                label_ids.append(task_config.label2id[label])
         
-        # Dropout (in eval mode, dropout is identity)
-        sequence_output = self.dropout(sequence_output)
-        
-        # CNN layer
-        if self.cnn_layer is not None:
-            sequence_output = self.cnn_layer(sequence_output)
-            sequence_output = self.dropout(sequence_output)
-        
-        # Get emission scores
-        emissions = self.classifier(sequence_output)
-        
-        if self.head_type == 'crf':
-            # Use Viterbi decoding for CRF
-            # Use attention_mask as the CRF mask
-            crf_mask = attention_mask.bool()
-            predictions = self.crf.decode(emissions, mask=crf_mask)
-            return predictions
-        else:
-            # Argmax for softmax/cnn heads
-            predictions = torch.argmax(emissions, dim=-1)
-            return predictions.tolist()
+        labels.append(label_ids)
+    
+    tokenized_inputs["labels"] = labels
+    return tokenized_inputs
 
 
 # ============================================================================
-# TRAINING UTILITIES
+# METRICS COMPUTATION (NEW - for Trainer)
+# ============================================================================
+
+def compute_metrics(eval_pred, task_config):
+    """
+    Tính metrics tổng hợp VÀ in ra chi tiết từng nhãn (Per-label metrics).
+    Tối ưu hóa bộ nhớ: Tính toán trên Numpy int, không convert list string.
+    """
+    predictions, labels = eval_pred
+    
+    # [1] Xử lý tuple (logits, hidden_states) nếu có
+    if isinstance(predictions, tuple):
+        found_preds = None
+        for item in predictions:
+            if isinstance(item, np.ndarray) and item.ndim == 2:
+                found_preds = item
+                break
+        predictions = found_preds if found_preds is not None else predictions[0]
+
+    # [2] Argmax nếu là logits 3D
+    if len(predictions.shape) == 3:
+        predictions = np.argmax(predictions, axis=2)
+
+    # [3] Flatten & Masking (Thao tác RAM thấp)
+    true_predictions = predictions.flatten()
+    true_labels = labels.flatten()
+    
+    mask = true_labels != -100
+    
+    # Lấy dữ liệu sạch (vẫn là dạng số ID)
+    filtered_preds = true_predictions[mask]
+    filtered_labels = true_labels[mask]
+    
+    # ========================================================================
+    # IN BÁO CÁO CHI TIẾT TỪNG LABEL (Classification Report)
+    # ========================================================================
+    
+    # Lấy danh sách các ID xuất hiện trong tập này để map tên
+    # (Để tránh lỗi nếu tập eval thiếu một số nhãn hiếm)
+    unique_ids = sorted(list(set(filtered_labels) | set(filtered_preds)))
+    target_names = [task_config.id2label[i] for i in unique_ids]
+    
+    # In ra màn hình console (Log)
+    print("\n" + "="*60)
+    print("DETAILED CLASSIFICATION REPORT (Per-Label Metrics)")
+    print("-" * 60)
+    try:
+        print(classification_report(
+            filtered_labels, 
+            filtered_preds, 
+            labels=unique_ids,
+            target_names=target_names, 
+            digits=4, # Hiển thị 4 chữ số thập phân
+            zero_division=0
+        ))
+    except Exception as e:
+        print(f"Error printing report: {e}")
+    print("="*60 + "\n")
+
+    # ========================================================================
+    # TRẢ VỀ METRICS TỔNG HỢP CHO TRAINER
+    # ========================================================================
+    
+    # Vẫn cần trả về số tổng (Macro Average) để Trainer chọn best model
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        filtered_labels, filtered_preds, average='macro', zero_division=0
+    )
+    
+    return {
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+    }
+
+# ============================================================================
+# CUSTOM CALLBACKS (NEW)
+# ============================================================================
+
+class LimitedEvalCallback(TrainerCallback):
+    """Callback to limit evaluation samples during training"""
+    
+    def __init__(self, max_eval_samples: int = 1000):
+        self.max_eval_samples = max_eval_samples
+    
+    def on_evaluate(self, args, state, control, **kwargs):
+        """Called during evaluation"""
+        # This is handled by setting max_eval_samples in eval_dataset
+        pass
+
+
+# ============================================================================
+# TRAINING UTILITIES (Keep existing functions)
 # ============================================================================
 
 def set_seed(seed: int):
@@ -339,113 +466,8 @@ def set_seed(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
-def setup_ddp(rank: int, world_size: int):
-    """Initialize distributed process group"""
-    os.environ['MASTER_ADDR'] = os.environ.get('MASTER_ADDR', 'localhost')
-    os.environ['MASTER_PORT'] = os.environ.get('MASTER_PORT', '29500')
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
-
-
-def cleanup_ddp():
-    """Clean up distributed process group"""
-    if dist.is_initialized():
-        dist.destroy_process_group()
-
-
-def is_main_process():
-    """Check if current process is the main process (rank 0)"""
-    if not dist.is_initialized():
-        return True
-    return dist.get_rank() == 0
-
-
-def load_data(json_path: str) -> Tuple[List[str], List[List[str]]]:
-    texts = []
-    labels = []
-    """Load data from JSON file"""
-    with open(json_path, "r", encoding="utf-8") as f:
-        first = f.read(1)
-        f.seek(0)
-
-        # Case 1: JSON array
-        if first == "[":
-            data = json.load(f)
-            for item in data:
-                texts.append(item["text"])
-                labels.append(item["labels"])
-
-        # Case 2: JSONL
-        else:
-            for line in f:
-                if not line.strip():
-                    continue
-                item = json.loads(line)
-                texts.append(item["text"])
-                labels.append(item["labels"])
-
-    return texts, labels
-
-
-def create_dataloaders(
-    train_texts: List[str],
-    train_labels: List[List[str]],
-    val_texts: List[str],
-    val_labels: List[List[str]],
-    tokenizer,
-    config: TaskConfig,
-    training_config: TrainingConfig,
-    use_ddp: bool = False
-) -> Tuple[DataLoader, DataLoader]:
-    """Create train and validation dataloaders"""
-    
-    train_dataset = ClassicalChineseDataset(
-        train_texts, train_labels, tokenizer, config, training_config.max_length
-    )
-    val_dataset = ClassicalChineseDataset(
-        val_texts, val_labels, tokenizer, config, training_config.max_length
-    )
-    
-    # Use DistributedSampler for DDP
-    train_sampler = DistributedSampler(train_dataset) if use_ddp else None
-    val_sampler = DistributedSampler(val_dataset, shuffle=False) if use_ddp else None
-    
-    # persistent_workers only works with num_workers > 0
-    use_persistent = training_config.persistent_workers and training_config.num_workers > 0
-    
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=training_config.batch_size,
-        shuffle=(train_sampler is None),  # Don't shuffle if using sampler
-        sampler=train_sampler,
-        num_workers=training_config.num_workers,
-        pin_memory=training_config.pin_memory,
-        persistent_workers=use_persistent
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=training_config.batch_size,
-        shuffle=False,
-        sampler=val_sampler,
-        num_workers=training_config.num_workers,
-        pin_memory=training_config.pin_memory,
-        persistent_workers=use_persistent
-    )
-    
-    return train_loader, val_loader, train_sampler
-
-
 def apply_punctuation_labels(text: str, labels: List[str]) -> str:
-    """Apply punctuation labels to text
-    
-    Args:
-        text: Original text string
-        labels: List of labels ('O' or punctuation marks)
-    
-    Returns:
-        Text with punctuation inserted after characters
-    """
+    """Apply punctuation labels to text"""
     output = []
     for ch, label in zip(text, labels):
         output.append(ch)
@@ -455,16 +477,7 @@ def apply_punctuation_labels(text: str, labels: List[str]) -> str:
 
 
 def apply_segmentation_inline(text: str, labels: List[str], sep: str = " | ") -> str:
-    """Apply segmentation labels to text
-    
-    Args:
-        text: Original text string
-        labels: List of BMES labels
-        sep: Separator to use between segments
-    
-    Returns:
-        Text with separators between segments
-    """
+    """Apply segmentation labels to text"""
     output = []
     for ch, label in zip(text, labels):
         output.append(ch)
@@ -481,19 +494,7 @@ def predict_labels(
     device: str,
     max_length: int = 256
 ) -> List[str]:
-    """Predict labels for a single text
-    
-    Args:
-        model: The trained model
-        text: Input text string
-        tokenizer: The tokenizer
-        config: Task configuration
-        device: Device to run on
-        max_length: Maximum sequence length
-    
-    Returns:
-        List of predicted labels for each character
-    """
+    """Predict labels for a single text"""
     model.eval()
     chars = list(text)
     
@@ -534,19 +535,7 @@ def run_test_set(
     max_length: int = 256,
     logger=None
 ):
-    """Run predictions on test set and save results with actual text
-    
-    Args:
-        model: The trained model
-        tokenizer: The tokenizer
-        config: Task configuration
-        device: Device to run on
-        test_texts: List of test texts
-        test_labels: List of ground truth labels
-        output_path: Path to save results JSON
-        max_length: Maximum sequence length
-        logger: Logger instance
-    """
+    """Run predictions on test set and save results"""
     results = []
     
     for i, (text, gold_labels) in enumerate(tqdm(zip(test_texts, test_labels), 
@@ -561,7 +550,6 @@ def run_test_set(
             max_length=max_length
         )
         
-        # Apply labels to get formatted text
         if config.task_name == "punctuation":
             gold_text = apply_punctuation_labels(text, gold_labels)
             pred_text = apply_punctuation_labels(text, pred_labels)
@@ -580,7 +568,6 @@ def run_test_set(
             "pred_text_labeled": pred_text,
         })
     
-    # Save results
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     
@@ -588,7 +575,6 @@ def run_test_set(
         logger.info(f"✓ Predictions saved to: {output_path}")
         logger.info(f"  Total samples: {len(results)}")
         
-        # Show a few examples
         logger.info("\n" + "="*70)
         logger.info("SAMPLE PREDICTIONS")
         logger.info("="*70)
@@ -600,457 +586,128 @@ def run_test_set(
             logger.info(f"Predicted: {sample['pred_text_labeled'][:100]}...")
 
 
-def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False):
-    """Evaluate model on a dataset with minimal memory footprint"""
-    model.eval()
-    
-    total_loss = 0.0
-    num_batches = 0
-    
-    # Initialize confusion matrix
-    num_labels = task_config.num_labels
-    conf_matrix = np.zeros((num_labels, num_labels), dtype=np.int64)
-    
-    with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            
-            with torch.amp.autocast('cuda', enabled=use_amp and torch.cuda.is_available()):
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-
-            loss = outputs['loss']
-            if loss is None:
-                raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
-            if loss.dim() > 0:
-                loss = loss.mean()
-
-            total_loss += loss.item()
-            num_batches += 1
-            
-            if 'predictions' in outputs:
-                predictions = outputs['predictions']
-            else:
-                predictions = torch.argmax(outputs['logits'], dim=-1)
-            
-            # Move to CPU and process immediately
-            predictions = predictions.cpu().numpy()
-            labels_cpu = labels.cpu().numpy()
-            
-            # Delete GPU tensors
-            del outputs, input_ids, attention_mask, labels
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            # Update confusion matrix (only valid labels)
-            mask = labels_cpu != -100
-            valid_preds = predictions[mask]
-            valid_labels = labels_cpu[mask]
-            
-            # Filter out ignore labels
-            if task_config.ignore_labels:
-                ignore_ids = [task_config.label2id[label] for label in task_config.ignore_labels]
-                keep_mask = ~np.isin(valid_labels, ignore_ids)
-                valid_preds = valid_preds[keep_mask]
-                valid_labels = valid_labels[keep_mask]
-            
-            # Update confusion matrix
-            conf_matrix += confusion_matrix(
-                valid_labels, valid_preds,
-                labels=list(range(num_labels))
-            )
-            
-            # Delete CPU arrays
-            del predictions, labels_cpu, mask, valid_preds, valid_labels
-    
-    # Calculate metrics from confusion matrix
-    avg_loss = total_loss / num_batches
-    
-    # Calculate per-class precision, recall, F1
-    per_label_metrics = {}
-    precisions = []
-    recalls = []
-    f1s = []
-    
-    for i in range(num_labels):
-        tp = conf_matrix[i, i]
-        fp = conf_matrix[:, i].sum() - tp
-        fn = conf_matrix[i, :].sum() - tp
-        support = conf_matrix[i, :].sum()
-        
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-        
-        label_name = task_config.id2label.get(i, str(i))
-        per_label_metrics[label_name] = {
-            'precision': float(precision),
-            'recall': float(recall),
-            'f1': float(f1),
-            'support': int(support)
-        }
-        
-        if support > 0:  # Only include labels with support for macro average
-            precisions.append(precision)
-            recalls.append(recall)
-            f1s.append(f1)
-    
-    # Macro average
-    macro_precision = np.mean(precisions) if precisions else 0.0
-    macro_recall = np.mean(recalls) if recalls else 0.0
-    macro_f1 = np.mean(f1s) if f1s else 0.0
-    
-    return {
-        'loss': avg_loss,
-        'precision': macro_precision,
-        'recall': macro_recall,
-        'f1': macro_f1,
-        'per_label': per_label_metrics
-    }
-
-def train_epoch(model, train_loader, optimizer, scheduler, device, config, logger, epoch, scaler=None):
-    """Train for one epoch"""
-    model.train()
-    total_loss = 0.0
-    use_amp = scaler is not None and scaler.is_enabled()
-    
-    progress_bar = tqdm(train_loader, desc="Training")
-    
-    for step, batch in enumerate(progress_bar):
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
-        
-        with torch.amp.autocast('cuda', enabled=use_amp):
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs['loss']
-
-        if loss is None:
-            raise ValueError("Model did not return a loss. Ensure labels are passed correctly.")
-        # DataParallel gathers per-device scalar losses into a vector; reduce to scalar.
-        if loss.dim() > 0:
-            loss = loss.mean()
-        
-        if config.gradient_accumulation_steps > 1:
-            loss = loss / config.gradient_accumulation_steps
-        
-        if use_amp:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
-        
-        if (step + 1) % config.gradient_accumulation_steps == 0:
-            if use_amp:
-                scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-            if use_amp:
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
-        
-        step_loss = loss.item() * (config.gradient_accumulation_steps if config.gradient_accumulation_steps > 1 else 1)
-        total_loss += step_loss
-        progress_bar.set_postfix({'loss': f'{step_loss:.4f}'})
-        
-        # Log loss for each step
-        logger.info(
-            "Epoch %d | Step %d/%d | Loss %.4f",
-            epoch, step + 1, len(train_loader), step_loss
-        )
-    
-    return total_loss / len(train_loader)
-
-
-def train_with_early_stopping(
-    model,
-    train_loader,
-    val_loader,
-    task_config,
-    training_config,
-    logger,
-    save_path,
-    train_sampler=None
-):
-    """Train model with early stopping"""
-    
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=training_config.learning_rate,
-        weight_decay=training_config.weight_decay
-    )
-    scaler = torch.amp.GradScaler('cuda', enabled=training_config.fp16 and torch.cuda.is_available())
-    
-    steps_per_epoch = math.ceil(len(train_loader) / training_config.gradient_accumulation_steps)
-    num_training_steps = steps_per_epoch * training_config.num_epochs
-    num_warmup_steps = int(num_training_steps * training_config.warmup_ratio)
-    
-    scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer,
-        start_factor=1.0,
-        end_factor=0.0,
-        total_iters=num_training_steps
-    )
-    
-    best_val_f1 = 0.0
-    patience_counter = 0
-    history = []
-    
-    if is_main_process():
-        logger.info("\n" + "="*70)
-        logger.info("TRAINING START")
-        logger.info("="*70)
-    
-    for epoch in range(training_config.num_epochs):
-        # Set epoch for DistributedSampler (important for proper shuffling)
-        if train_sampler is not None:
-            train_sampler.set_epoch(epoch)
-        
-        if is_main_process():
-            logger.info(f"\nEpoch {epoch + 1}/{training_config.num_epochs}")
-        
-        # Train
-        train_loss = train_epoch(
-            model,
-            train_loader,
-            optimizer,
-            scheduler,
-            training_config.device,
-            training_config,
-            logger,
-            epoch + 1,
-            scaler
-        )
-        
-        # Validate
-        val_metrics = evaluate_model(
-            model,
-            val_loader,
-            task_config,
-            training_config.device,
-            use_amp=training_config.fp16
-        )
-        
-        if is_main_process():
-            logger.info(f"Train Loss: {train_loss:.4f}")
-            logger.info(f"Val Loss: {val_metrics['loss']:.4f}")
-            logger.info(f"Val Precision (Overall): {val_metrics['precision']:.4f}")
-            logger.info(f"Val Recall (Overall): {val_metrics['recall']:.4f}")
-            logger.info(f"Val F1 (Overall): {val_metrics['f1']:.4f}")
-            
-            # Log per-label metrics
-            logger.info("\n  Per-Label Metrics:")
-            logger.info("  {:<12} {:>10} {:>10} {:>10} {:>10}".format(
-                "Label", "Precision", "Recall", "F1", "Support"))
-            logger.info("  " + "-" * 52)
-            for label_name, metrics in val_metrics['per_label'].items():
-                logger.info("  {:<12} {:>10.4f} {:>10.4f} {:>10.4f} {:>10}".format(
-                    label_name,
-                    metrics['precision'],
-                    metrics['recall'],
-                    metrics['f1'],
-                    metrics['support']
-                ))
-        
-            # Save validation history
-            val_result = {
-                'epoch': epoch + 1,
-                **val_metrics
-            }
-            history.append(val_result)
-            
-            history_path = os.path.join(training_config.output_dir, f"val_history_{task_config.task_name}_{training_config.head_type}.json")
-            with open(history_path, 'w', encoding='utf-8') as f:
-                json.dump(history, f, indent=2, ensure_ascii=False)
-            
-            if val_metrics['f1'] > best_val_f1:
-                # Save best results
-                best_results_path = os.path.join(training_config.output_dir, f"best_val_results_{task_config.task_name}_{training_config.head_type}.json")
-                with open(best_results_path, 'w', encoding='utf-8') as f:
-                     json.dump(val_result, f, indent=2, ensure_ascii=False)
-                logger.info(f"✓ Best validation results saved to: {best_results_path}")
-        
-        # Early stopping (only main process makes decisions, but all processes follow)
-        if val_metrics['f1'] > best_val_f1:
-            best_val_f1 = val_metrics['f1']
-            # Save model state - for DDP, save the underlying module
-            if is_main_process():
-                state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
-                torch.save(state_dict, save_path)
-                logger.info(f"✓ New best F1: {best_val_f1:.4f} - Model saved!")
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            if is_main_process():
-                logger.info(f"Patience: {patience_counter}/{training_config.early_stopping_patience}")
-            
-            if patience_counter >= training_config.early_stopping_patience:
-                if is_main_process():
-                    logger.info(f"\n⚠ Early stopping triggered!")
-                break
-    
-    if is_main_process():
-        logger.info("\n" + "="*70)
-        logger.info(f"Training complete! Best Val F1: {best_val_f1:.4f}")
-        logger.info("="*70)
-    
-    return best_val_f1
-
-
 # ============================================================================
-# MAIN TRAINING FUNCTION
+# MAIN TRAINING FUNCTION (NEW - using Trainer API)
 # ============================================================================
 
 def main():
-    # Set multiprocessing start method for CUDA compatibility on Slurm
+    # Set multiprocessing start method
     try:
         multiprocessing.set_start_method('spawn', force=True)
     except RuntimeError:
-        pass  # Already set
+        pass
     
-    parser = argparse.ArgumentParser(description='Train SikuBERT for Token Classification')
+    parser = argparse.ArgumentParser(description='Train SikuBERT with QLoRA')
     
     # Task configuration
     parser.add_argument('--task', type=str, required=True, 
-                       choices=['punctuation', 'segmentation'],
-                       help='Task type')
-    parser.add_argument('--train_path', type=str, required=True,
-                       help='Path to training data')
-    parser.add_argument('--val_path', type=str, required=True,
-                       help='Path to validation data')
-    parser.add_argument('--test_path', type=str, required=True,
-                       help='Path to test data')
+                       choices=['punctuation', 'segmentation'])
+    parser.add_argument('--data_dir', type=str, required=True,
+                       help='Directory containing train/val/test folders with parquet files')
+    parser.add_argument('--train_path', type=str, default='',
+                       help='Legacy: Path to training data (for backward compatibility)')
+    parser.add_argument('--val_path', type=str, default='',
+                       help='Legacy: Path to validation data')
+    parser.add_argument('--test_path', type=str, default='',
+                       help='Legacy: Path to test data')
     
     # Model configuration
-    parser.add_argument('--model_name', type=str, default='SIKU-BERT/sikubert',
-                       help='Pretrained model name')
-    parser.add_argument('--max_length', type=int, default=256,
-                       help='Maximum sequence length')
+    parser.add_argument('--model_name', type=str, default='SIKU-BERT/sikubert')
+    parser.add_argument('--max_length', type=int, default=256)
     
     # Training configuration
-    parser.add_argument('--batch_size', type=int, default=64,
-                       help='Batch size')
-    parser.add_argument('--learning_rate', type=float, default=2e-5,
-                       help='Learning rate')
-    parser.add_argument('--num_epochs', type=int, default=5,
-                       help='Number of epochs')
-    parser.add_argument('--warmup_ratio', type=float, default=0.1,
-                       help='Warmup ratio')
-    parser.add_argument('--weight_decay', type=float, default=0.01,
-                       help='Weight decay')
-    parser.add_argument('--dropout', type=float, default=0.1,
-                       help='Dropout rate')
-    parser.add_argument('--max_grad_norm', type=float, default=1.0,
-                       help='Max gradient norm (for clipping)')
-    parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
-                       help='Number of steps for gradient accumulation')
-    parser.add_argument('--early_stopping_patience', type=int, default=3,
-                       help='Patience for early stopping')
-    parser.add_argument('--seed', type=int, default=42,
-                       help='Random seed')
+    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--learning_rate', type=float, default=2e-5)
+    parser.add_argument('--num_epochs', type=int, default=5)
+    parser.add_argument('--max_steps', type=int, default=-1,
+                       help='Max training steps (overrides num_epochs if set)')
+    parser.add_argument('--eval_steps', type=int, default=500,
+                       help='Evaluate every N steps')
+    parser.add_argument('--save_steps', type=int, default=500,
+                       help='Save checkpoint every N steps')
+    parser.add_argument('--logging_steps', type=int, default=100)
+    parser.add_argument('--max_eval_samples', type=int, default=1000,
+                       help='Max samples for intermediate evaluation')
+    parser.add_argument('--warmup_ratio', type=float, default=0.1)
+    parser.add_argument('--weight_decay', type=float, default=0.01)
+    parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--max_grad_norm', type=float, default=1.0)
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1)
+    parser.add_argument('--early_stopping_patience', type=int, default=10)
+    parser.add_argument('--seed', type=int, default=42)
     
-    # DataLoader configuration (important for Slurm)
-    parser.add_argument('--num_workers', type=int, default=0,
-                       help='Number of DataLoader workers (set 0 for Slurm compatibility)')
-    parser.add_argument('--fp16', action='store_true', default=False,
-                       help='Use mixed precision training (FP16)')
+    # QLoRA configuration
+    parser.add_argument('--use_qlora', action='store_true', default=True,
+                       help='Use QLoRA (default: True)')
+    parser.add_argument('--lora_r', type=int, default=16,
+                       help='LoRA rank')
+    parser.add_argument('--lora_alpha', type=int, default=32,
+                       help='LoRA alpha')
+    parser.add_argument('--lora_dropout', type=float, default=0.1,
+                       help='LoRA dropout')
+    parser.add_argument('--lora_target_modules', type=str, nargs='+',
+                       default=['query', 'key', 'value'],
+                       help='LoRA target modules')
+    
+    # DataLoader configuration
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--fp16', action='store_true', default=True)
+    parser.add_argument('--bf16', action='store_true', default=False)
+    
+    # Streaming configuration
+    parser.add_argument('--use_streaming', action='store_true', default=True,
+                       help='Use streaming dataset (default: True)')
+    
+    # DataLoader configuration (Extra)
     parser.add_argument('--pin_memory', action='store_true', default=False,
-                       help='Pin memory for DataLoader')
+                       help='Pin memory for faster GPU transfer')
     parser.add_argument('--persistent_workers', action='store_true', default=False,
-                       help='Use persistent workers for DataLoader')
+                       help='Keep workers alive between epochs')
     
     # CNN configuration
-    parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7],
-                       help='CNN kernel sizes (only used when head_type=cnn)')
-    parser.add_argument('--cnn_num_filters', type=int, default=256,
-                       help='Number of CNN filters (only used when head_type=cnn)')
-    
-    # Head type configuration
+    parser.add_argument('--cnn_kernel_sizes', type=int, nargs='+', default=[3, 5, 7])
+    parser.add_argument('--cnn_num_filters', type=int, default=256)
     parser.add_argument('--head_type', type=str, default='cnn',
-                       choices=['softmax', 'crf', 'cnn'],
-                       help='Classification head type: softmax (FC only), crf (BERT+CRF), cnn (BERT+CNN)')
+                       choices=['softmax', 'crf', 'cnn'])
     
     # Output configuration
-    parser.add_argument('--output_dir', type=str, default='outputs',
-                       help='Output directory')
-    parser.add_argument('--model_save_dir', type=str, default='models',
-                       help='Model save directory')
-    parser.add_argument('--log_dir', type=str, default='logs',
-                       help='Log directory')
-    
-    # Resume from checkpoint (for multi-phase training)
-    parser.add_argument('--resume_from_checkpoint', type=str, default='',
-                       help='Path to checkpoint to resume training from')
+    parser.add_argument('--output_dir', type=str, default='outputs')
+    parser.add_argument('--model_save_dir', type=str, default='models')
+    parser.add_argument('--log_dir', type=str, default='logs')
+    parser.add_argument('--resume_from_checkpoint', type=str, default='')
     
     args = parser.parse_args()
     
-    # Setup DDP if available FIRST (torchrun sets these environment variables)
-    use_ddp = 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
+    # Setup logging
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.model_save_dir, exist_ok=True)
+    os.makedirs(args.log_dir, exist_ok=True)
     
-    if use_ddp:
-        rank = int(os.environ['RANK'])
-        world_size = int(os.environ['WORLD_SIZE'])
-        local_rank = int(os.environ['LOCAL_RANK'])
-        setup_ddp(rank, world_size)
-        device = f"cuda:{local_rank}"
-        torch.cuda.set_device(local_rank)
-    else:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        local_rank = 0
-    
-    # Create output directories (only main process to avoid race conditions)
-    if is_main_process():
-        os.makedirs(args.output_dir, exist_ok=True)
-        os.makedirs(args.model_save_dir, exist_ok=True)
-        os.makedirs(args.log_dir, exist_ok=True)
-    
-    # Wait for main process to create directories
-    if use_ddp:
-        dist.barrier()
-    
-    # Setup logging - only main process writes to file
-    log_file = os.path.join(args.log_dir, f"train_{args.task}.log")
-    if is_main_process():
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s | %(message)s",
-            handlers=[
-                logging.FileHandler(log_file, mode="w", encoding="utf-8"),
-                logging.StreamHandler(sys.stdout),
-            ],
-            force=True
-        )
-    else:
-        # Non-main processes: minimal logging (only warnings/errors)
-        logging.basicConfig(
-            level=logging.WARNING,
-            format="%(asctime)s | [Rank %(process)d] %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)],
-            force=True
-        )
+    log_file = os.path.join(args.log_dir, f"train_{args.task}_qlora.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, mode="w", encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ],
+        force=True
+    )
     logger = logging.getLogger(__name__)
     
-    # Log arguments (only from main process)
-    if is_main_process():
-        logger.info("="*70)
-        logger.info("TRAINING CONFIGURATION")
-        logger.info("="*70)
-        for arg, value in vars(args).items():
-            logger.info(f"{arg}: {value}")
-        logger.info("="*70)
+    logger.info("="*70)
+    logger.info("TRAINING CONFIGURATION")
+    logger.info("="*70)
+    for arg, value in vars(args).items():
+        logger.info(f"{arg}: {value}")
+    logger.info("="*70)
     
     # Set seed
     set_seed(args.seed)
     
-    if is_main_process():
-        logger.info(f"\n✓ Device: {device}")
-        if use_ddp:
-            logger.info(f"  Using DDP with {int(os.environ.get('WORLD_SIZE', 1))} GPUs")
-        if torch.cuda.is_available():
-            logger.info(f"  GPU: {torch.cuda.get_device_name(local_rank)}")
+    # Device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info(f"\n✓ Device: {device}")
     
     # Task configuration
     if args.task == "punctuation":
@@ -1066,133 +723,198 @@ def main():
             ignore_labels=[]
         )
     
-    if is_main_process():
-        logger.info(f"\n✓ Task: {task_config.task_name}")
-        logger.info(f"  Labels: {task_config.labels}")
-        logger.info(f"  Num labels: {task_config.num_labels}")
-    
-    # Training configuration
-    training_config = TrainingConfig(
-        model_name=args.model_name,
-        max_length=args.max_length,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        num_epochs=args.num_epochs,
-        warmup_ratio=args.warmup_ratio,
-        weight_decay=args.weight_decay,
-        dropout=args.dropout,
-        max_grad_norm=args.max_grad_norm,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        early_stopping_patience=args.early_stopping_patience,
-        device=device,
-        seed=args.seed,
-        num_workers=args.num_workers,
-        fp16=args.fp16,
-        pin_memory=args.pin_memory,
-        persistent_workers=args.persistent_workers,
-        head_type=args.head_type,
-        output_dir=args.output_dir
-    )
+    logger.info(f"\n✓ Task: {task_config.task_name}")
+    logger.info(f"  Labels: {task_config.labels}")
+    logger.info(f"  Num labels: {task_config.num_labels}")
     
     # Load tokenizer
-    if is_main_process():
-        logger.info("\n✓ Loading tokenizer...")
+    logger.info("\n✓ Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     
-    # Load data
-    if is_main_process():
-        logger.info("✓ Loading data...")
-    train_texts, train_labels = load_data(args.train_path)
-    val_texts, val_labels = load_data(args.val_path)
+    # Calculate max_steps if explicitly set to -1 (use num_epochs)
+    if args.max_steps == -1 and args.use_streaming:
+        logger.info("\n✓ Calculating max_steps from dataset size...")
+        try:
+            train_dir = Path(args.data_dir) / "train"
+            parquet_files = list(train_dir.glob("*.parquet"))
+            total_samples = 0
+            for pf in parquet_files:
+                meta = pq.read_metadata(pf)
+                total_samples += meta.num_rows
+            
+            # Adjust for distributed training
+            world_size = int(os.environ.get("WORLD_SIZE", 1))
+            effective_batch_size = args.batch_size * args.gradient_accumulation_steps * world_size
+            steps_per_epoch = math.ceil(total_samples / effective_batch_size)
+            
+            args.max_steps = steps_per_epoch * args.num_epochs
+            logger.info(f"  Total samples: {total_samples}")
+            logger.info(f"  Steps per epoch: {steps_per_epoch}")
+            logger.info(f"  Max steps: {args.max_steps} (for {args.num_epochs} epochs)")
+            
+        except Exception as e:
+            logger.warning(f"  Could not calculate dataset size: {e}")
+            logger.warning("  Please provide --max_steps manually if training fails.")
+
+    # Load datasets
+    logger.info("\n✓ Loading datasets...")
     
-    if is_main_process():
-        logger.info(f"  Train samples: {len(train_texts)}")
-        logger.info(f"  Val samples: {len(val_texts)}")
+    # Streaming mode with parquet files
+    logger.info(f"  Using streaming mode from: {args.data_dir}")
     
-    # Create dataloaders
-    if is_main_process():
-        logger.info("✓ Creating dataloaders...")
-    train_loader, val_loader, train_sampler = create_dataloaders(
-        train_texts, train_labels,
-        val_texts, val_labels,
-        tokenizer, task_config, training_config,
-        use_ddp=use_ddp
+    train_dataset = load_streaming_dataset(args.data_dir, "train")
+    val_dataset = load_streaming_dataset(args.data_dir, "val")
+    
+    # Preprocess
+    train_dataset = train_dataset.map(
+        partial(preprocess_function, tokenizer=tokenizer, task_config=task_config, max_length=args.max_length),
+        batched=True,
+        remove_columns=train_dataset.column_names
     )
     
+    val_dataset = val_dataset.map(
+        partial(preprocess_function, tokenizer=tokenizer, task_config=task_config, max_length=args.max_length),
+        batched=True,
+        remove_columns=val_dataset.column_names
+    )
+    
+    # For evaluation during training, take limited samples
+    eval_dataset = val_dataset.take(args.max_eval_samples)
+        
+    logger.info(f"✓ Datasets loaded")
+    
+    # Setup QLoRA config
+    qlora_config = None
+    if args.use_qlora:
+        logger.info("\n✓ Setting up QLoRA configuration...")
+        qlora_config = LoraConfig(
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            target_modules=args.lora_target_modules,
+            lora_dropout=args.lora_dropout,
+            bias="none",
+            # Vì bạn dùng BERT + CNN, BERT chỉ đóng vai trò feature extractor
+            task_type=TaskType.FEATURE_EXTRACTION
+        )
+        logger.info(f"  LoRA rank: {args.lora_r}")
+        logger.info(f"  LoRA alpha: {args.lora_alpha}")
+        logger.info(f"  Target modules: {args.lora_target_modules}")
+    
     # Create model
-    if is_main_process():
-        logger.info(f"✓ Creating model with head_type={args.head_type}...")
+    logger.info(f"\n✓ Creating model with head_type={args.head_type}...")
     model = SikuBERTForTokenClassification(
         model_name=args.model_name,
         num_labels=task_config.num_labels,
         dropout=args.dropout,
         head_type=args.head_type,
         cnn_kernel_sizes=args.cnn_kernel_sizes,
-        cnn_num_filters=args.cnn_num_filters
+        cnn_num_filters=args.cnn_num_filters,
+        use_qlora=args.use_qlora,
+        qlora_config=qlora_config
     )
     
-    # Load checkpoint if resuming
-    if args.resume_from_checkpoint and os.path.exists(args.resume_from_checkpoint):
-        if is_main_process():
-            logger.info(f"\n✓ Resuming from checkpoint: {args.resume_from_checkpoint}")
-        model.load_state_dict(torch.load(args.resume_from_checkpoint, weights_only=True))
-
-    model = model.to(device)
-    
-    # Wrap model with DDP
-    if use_ddp:
-        model = DDP(model, device_ids=[local_rank], output_device=local_rank)
-        if is_main_process():
-            logger.info(f"  Model wrapped with DistributedDataParallel")
-    
-    num_params = sum(p.numel() for p in model.parameters())
-    if is_main_process():
-        logger.info(f"  Total parameters: {num_params:,}")
-    
-    # Extract train file name for checkpoint naming
-    train_file_name = os.path.splitext(os.path.basename(args.train_path))[0]
-    save_path = os.path.join(args.model_save_dir, f"best_{args.task}_model_{args.head_type}.pt")
-    
-    best_val_f1 = train_with_early_stopping(
-        model, train_loader, val_loader,
-        task_config, training_config,
-        logger, save_path,
-        train_sampler=train_sampler
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir=args.output_dir,
+        max_steps=args.max_steps,
+        num_train_epochs=args.num_epochs,
+        per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        warmup_ratio=args.warmup_ratio,
+        max_grad_norm=args.max_grad_norm,
+        fp16=args.fp16 and torch.cuda.is_available(),
+        bf16=args.bf16 and torch.cuda.is_available(),
+        logging_dir=args.log_dir,
+        logging_steps=args.logging_steps,
+        eval_strategy="steps",
+        eval_steps=args.eval_steps,
+        save_strategy="steps",
+        save_steps=args.save_steps,
+        save_total_limit=3,
+        load_best_model_at_end=True,
+        metric_for_best_model="f1",
+        greater_is_better=True,
+        dataloader_num_workers=args.num_workers,
+        dataloader_pin_memory=args.pin_memory,
+        dataloader_persistent_workers=args.persistent_workers,
+        remove_unused_columns=False,
+        label_names=["labels"],
+        report_to=["tensorboard"],
+        disable_tqdm=False,  # Hiển thị progress bar trên console
+        log_level="info",  # In training metrics (loss, lr) ra console real-time
+        logging_first_step=True,  # In metrics ngay từ step đầu tiên
+        seed=args.seed,
+        # [FIX QUAN TRỌNG CHO DDP + QLoRA]
+        # Tắt tính năng tự động tìm tham số không sử dụng của DDP
+        # để tránh xung đột với Gradient Checkpointing.
+        ddp_find_unused_parameters=False,
+        eval_accumulation_steps=10
     )
     
-    # Save training info (for tracking multi-phase training)
-    if is_main_process():
-        train_info = {
-            'task': args.task,
-            'train_path': args.train_path,
-            'train_file': train_file_name,
-            'val_path': args.val_path,
-            'best_val_f1': best_val_f1,
-            'resumed_from': args.resume_from_checkpoint if args.resume_from_checkpoint else None,
-            'model_saved_to': save_path,
-            'config': vars(args)
-        }
-        
-        train_info_path = os.path.join(args.output_dir, f"{args.task}_train_info_{train_file_name}.json")
-        with open(train_info_path, 'w', encoding='utf-8') as f:
-            json.dump(train_info, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"\n✓ Training info saved to: {train_info_path}")
-        logger.info("="*70)
-        logger.info("🎉 TRAINING COMPLETE!")
-        logger.info(f"  Best Val F1: {best_val_f1:.4f}")
-        logger.info(f"  Model saved: {save_path}")
-        logger.info(f"  Train file: {train_file_name}")
-        logger.info("="*70)
-        logger.info("")
-        logger.info("To evaluate on test set, run:")
-        logger.info(f"  python evaluate.py --task {args.task} --model_path {save_path} --test_path <test_path>")
-        logger.info("="*70)
+    # Data collator
+    data_collator = DataCollatorForTokenClassification(
+        tokenizer=tokenizer,
+        padding=True,
+        max_length=args.max_length
+    )
     
-    # Cleanup DDP
-    cleanup_ddp()
+    # Initialize Trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        data_collator=data_collator,
+        compute_metrics=partial(compute_metrics, task_config=task_config),
+        callbacks=[
+            EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience),
+            LimitedEvalCallback(max_eval_samples=args.max_eval_samples)
+        ]
+    )
+    
+    # Train
+    logger.info("\n" + "="*70)
+    logger.info("TRAINING START")
+    logger.info("="*70)
+    
+    if args.resume_from_checkpoint:
+        logger.info(f"\n✓ Resuming from checkpoint: {args.resume_from_checkpoint}")
+        trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
+    else:
+        trainer.train()
+    
+    logger.info("\n" + "="*70)
+    logger.info("TRAINING COMPLETE")
+    logger.info("="*70)
+    
+    # Save final model
+    final_model_path = os.path.join(args.model_save_dir, f"final_{args.task}_model_{args.head_type}")
+    trainer.save_model(final_model_path)
+    logger.info(f"\n✓ Final model saved to: {final_model_path}")
+    
+    # Full validation evaluation
+    logger.info("\n" + "="*70)
+    logger.info("FULL VALIDATION EVALUATION")
+    logger.info("="*70)
+    
+    full_val_metrics = trainer.evaluate(eval_dataset=val_dataset)
+    logger.info(f"\nFull Validation Metrics:")
+    for key, value in full_val_metrics.items():
+        logger.info(f"  {key}: {value}")
+    
+    # Save metrics
+    metrics_path = os.path.join(args.output_dir, f"final_metrics_{args.task}_{args.head_type}.json")
+    with open(metrics_path, 'w', encoding='utf-8') as f:
+        json.dump(full_val_metrics, f, indent=2)
+    
+    logger.info(f"\n✓ Metrics saved to: {metrics_path}")
+    logger.info("="*70)
+    logger.info("🎉 ALL DONE!")
+    logger.info("="*70)
 
 
 if __name__ == "__main__":
     main()
-
