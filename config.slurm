@@ -120,6 +120,10 @@ export LOG_DIR="${WORKING_DIR}/logs"
 # EVALUATION CONFIGURATION
 # ============================================================================
 
+# Evaluation dataset split: "val" or "test"
+# Set to "val" to evaluate on validation set, "test" to evaluate on test set
+export TEST_SPLIT="test"
+
 # Path to the trained model checkpoint for evaluation
 # For Trainer checkpoints: point to the checkpoint DIRECTORY (e.g., outputs/checkpoint-XXXX)
 # For legacy .pt files: point to the .pt file directly
