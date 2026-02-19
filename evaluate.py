@@ -43,8 +43,7 @@ from sklearn.metrics import (
 # CONSTANTS
 # ============================================================================
 
-TASK = "test"
-
+# (No constants needed - using args.test_split instead)
 
 # ============================================================================
 # CONFIGURATION CLASSES
@@ -104,7 +103,7 @@ def is_main_process():
 # STREAMING DATA UTILITIES (Matches train.py)
 # ============================================================================
 
-def load_streaming_dataset(data_dir: str, split: str = TASK):
+def load_streaming_dataset(data_dir: str, split: str):
     """Load dataset from multiple parquet files
     
     Args:
@@ -126,9 +125,9 @@ def load_streaming_dataset(data_dir: str, split: str = TASK):
     
     dataset = hf_load_dataset(
         "parquet",
-        data_files={TASK: [str(f) for f in parquet_files]},
+        data_files={split: [str(f) for f in parquet_files]},
         streaming=True
-    )[TASK]
+    )[split]
     
     return dataset
 
@@ -908,7 +907,7 @@ def main():
         dist.barrier()
     
     # Setup logging
-    log_file = os.path.join(args.log_dir, f"{TASK}_evaluate_{args.task}.log")
+    log_file = os.path.join(args.log_dir, f"{args.test_split}_evaluate_{args.task}.log")
     if is_main_process():
         logging.basicConfig(
             level=logging.INFO,
@@ -1100,14 +1099,14 @@ def main():
                 metrics['support']
             ))
     
-    if TASK != "val":
+    if args.test_split != "val":
         # Run predictions on test set
         if is_main_process():
             logger.info("\n" + "="*70)
             logger.info("RUNNING PREDICTIONS ON TEST SET")
             logger.info("="*70)
         
-        predictions_path = os.path.join(args.output_dir, f"{TASK}_{args.task}_predictions.json")
+        predictions_path = os.path.join(args.output_dir, f"{args.test_split}_{args.task}_predictions.json")
         
         # Re-create streaming dataset + DataLoader (IterableDataset can only be iterated once)
         pred_raw_dataset = load_streaming_dataset(args.data_dir, args.test_split)
@@ -1147,7 +1146,7 @@ def main():
             'config': vars(args)
         }
         
-        results_path = os.path.join(args.output_dir, f"{TASK}_{args.task}_eval_results.json")
+        results_path = os.path.join(args.output_dir, f"{args.test_split}_{args.task}_eval_results.json")
         with open(results_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         

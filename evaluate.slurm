@@ -75,6 +75,7 @@ echo "=========================================="
 echo "EVALUATION CONFIGURATION"
 echo "=========================================="
 echo "Task: $TASK"
+echo "Test Split: ${TEST_SPLIT:-test}"
 echo "Model: $MODEL_NAME"
 echo "Model Path: $EVAL_MODEL_PATH"
 echo "Data Dir: $DATA_DIR"
@@ -102,6 +103,7 @@ NGPUS=2
 
 torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
     --task $TASK \
+    --test_split ${TEST_SPLIT:-test} \
     --model_path $EVAL_MODEL_PATH \
     --data_dir $DATA_DIR \
     --model_name $MODEL_NAME \
