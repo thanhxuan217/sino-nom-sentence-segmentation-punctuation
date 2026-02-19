@@ -65,7 +65,7 @@ export EARLY_STOPPING_PATIENCE=5
 # Training steps (based on 5 epochs of dataset)
 export MAX_STEPS=217040  # 5 epochs 43,408 steps/epoch
 export EVAL_STEPS=4341   # ~10% of one epoch (evaluate ~10 times per epoch)
-export SAVE_STEPS=8682   # ~20% of one epoch (save ~5 times per epoch)
+export SAVE_STEPS=10000
 export LOGGING_STEPS=50 # Log every 100 steps
 export MAX_EVAL_SAMPLES=6000  # Reduced to prevent OOM during evaluation
 
@@ -112,9 +112,9 @@ export HEAD_TYPE="cnn"
 # ============================================================================
 # OUTPUT DIRECTORIES
 # ============================================================================
-export OUTPUT_DIR="${WORKING_DIR}/outputs"
-export MODEL_SAVE_DIR="${WORKING_DIR}/models"
-export LOG_DIR="${WORKING_DIR}/logs"
+export OUTPUT_DIR="${WORKING_DIR}/${HEAD_TYPE}_outputs"
+export MODEL_SAVE_DIR="${WORKING_DIR}/${HEAD_TYPE}_models"
+export LOG_DIR="${WORKING_DIR}/${HEAD_TYPE}_logs"
 
 # ============================================================================
 # EVALUATION CONFIGURATION
