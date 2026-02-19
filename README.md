@@ -1,7 +1,6 @@
-# SikuBERT Fine-tuning with CNN for SLURM
+# SikuBERT / GuwenBERT Fine-tuning with QLoRA & CNN for SLURM
 
-This repository contains code to fine-tune SikuBERT with CNN layers for token classification tasks (sentence segmentation and punctuation) on a SLURM cluster.
-
+This repository contains code to fine-tune SikuBERT, GuwenBERT, SikuRoberta, and other classical Chinese language models with QLoRA and CNN layers for token classification tasks (sentence segmentation and punctuation).
 
 ## 🚀 Quick Start
 
@@ -22,13 +21,12 @@ bash setup.slurm
 > - Max resources per job: 16 CPUs, 64GB RAM, 2 GPUs
 > - Max runtime: 48 hours
 > - Store source code & env in `/media02/ddien02/<username>/`
-> - Store large datasets on `/raid/` of GPU nodes
 
 **Step 1: Create your personal working directory:**
 ```bash
 # Replace 'thanhxuan217' with your username
 export WORKING_DIR="/media02/ddien02/thanhxuan217/main_src"
-mkdir -p ${WORKING_DIR}/{envs,outputs,models,logs}
+mkdir -p ${WORKING_DIR}/{envs,outputs,models,logs,data}
 ```
 
 **Step 2: Create Conda environment with prefix:**
@@ -49,42 +47,8 @@ pip install -r requirements.txt
 cp -r ./* ${WORKING_DIR}/
 ```
 
-**Step 4: Setup large dataset on GPU node's /raid:**
-
-> 💡 **Why /raid?** The `/raid` partition on each GPU node has several TB of fast local storage. 
-> This is ideal for large datasets, but the data is **only accessible from that specific node**.
-
-```bash
-# First, check available GPU nodes
-sinfo -N
-
-# SSH to the specific GPU node (or use srun)
-srun --nodelist=gpu01 --pty bash
-
-# Create your data directory on the node's /raid
-mkdir -p /raid/${USER}/data
-
-# Copy your large dataset (run this ON the GPU node or use scp)
-cp /path/to/your/data/*.jsonl /raid/${USER}/data/
-
-# Verify the data is there
-ls -la /raid/${USER}/data/
-
-# Exit the node
-exit
-```
-
-**Step 5: Configure your node in config files:**
-```bash
-# Edit config.slurm - set the GPU node name
-export GPU_NODE="gpu01"  # Must match where you stored the data!
-
-# Edit run.slurm - set the same node
-#SBATCH --nodelist=gpu01
-```
-
-> ⚠️ **IMPORTANT:** The `GPU_NODE` in `config.slurm` and `--nodelist` in `run.slurm` must 
-> match the node where you copied your data, otherwise the job won't find the files!
+**Step 4: Configure your node in config files (Optional):**
+If you need specific node configuration updates, modify `config.slurm`.
 
 #### For Local Development
 
@@ -100,20 +64,33 @@ pip install -r requirements.txt
 
 ### 3. Prepare Your Data
 
-Your data should be in JSON format with the following structure:
+Your data **must be in Parquet format** to support streaming and memory efficiency. The dataset should be partitioned into `train`, `val`, and `test` subdirectories.
 
-```json
-[
-  {
-    "text": "天地玄黃宇宙洪荒",
-    "labels": ["B", "M", "M", "E", "B", "M", "M", "E"]
-  },
-  {
-    "text": "日月盈昃辰宿列張",
-    "labels": ["B", "M", "M", "E", "B", "M", "M", "E"]
-  }
-]
+**Directory Structure:**
 ```
+data/
+├── train/
+│   ├── part-00000.parquet
+│   └── ...
+├── val/
+│   ├── part-00000.parquet
+│   └── ...
+└── test/
+    ├── part-00000.parquet
+    └── ...
+```
+
+**Parquet Schema:**
+Each row should contain:
+- `text`: The input text (string or list of characters).
+- `labels`: List of labels corresponding to each character/token.
+
+**Example Structure:**
+
+| text | labels |
+|------|--------|
+| "天地玄黃..." | ["B", "M", "M", "E", ...] |
+| "日月盈昃..." | ["B", "M", "M", "E", ...] |
 
 ### 4. Configure Your Training
 
@@ -122,13 +99,19 @@ Your data should be in JSON format with the following structure:
 Modify the `config.slurm` file with your settings:
 
 ```bash
-# Edit data paths
-export TRAIN_PATH="/path/to/your/segmentation_train.json"
-export VAL_PATH="/path/to/your/segmentation_val.json"
-export TEST_PATH="/path/to/your/segmentation_test.json"
+# Edit data paths (Data is stored in data/ folder)
+export DATA_DIR="${WORKING_DIR}/data"
 
 # Change task if needed
 export TASK="segmentation"  # or "punctuation"
+
+# Model Selection
+# Options: SIKU-BERT/sikubert, ethanyt/guwenbert-base, hfl/chinese-roberta-wwm-ext, etc.
+export MODEL_NAME="SIKU-BERT/sikubert"
+
+# QLoRA Settings
+export USE_QLORA_FLAG="--use_qlora"
+export LORA_R=16
 
 # Adjust hyperparameters
 export BATCH_SIZE=64
@@ -139,12 +122,48 @@ export NUM_EPOCHS=5
 ### 5. Submit to SLURM
 
 ```bash
-# Navigate to your working directory first
+# Navigate to your working directory first (if not already there)
 cd /media02/ddien02/thanhxuan217/main_src
 
 # Submit the job
 sbatch run.slurm
 ```
+
+## 🧪 Running Evaluation
+
+You can evaluate the trained model on either the **validation** or **test** set.
+
+### Option 1: Using SLURM (Recommended)
+
+1.  **Configure `config.slurm`**:
+    Edit the `TEST_SPLIT` variable to choose the dataset split:
+    ```bash
+    # Set to "val" for validation set, or "test" for test set
+    export TEST_SPLIT="test"
+    
+    # Ensure EVAL_MODEL_PATH points to your trained model checkpoint
+    export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/final_segmentation_model_cnn"
+    ```
+
+2.  **Submit the evaluation job**:
+    ```bash
+    sbatch evaluate.slurm
+    ```
+
+### Option 2: Running Locally
+
+```bash
+python evaluate.py \
+    --task segmentation \
+    --test_split test \
+    --model_path models/final_segmentation_model_cnn \
+    --data_dir data \
+    --head_type cnn \
+    --batch_size 32 \
+    --output_dir outputs
+```
+
+> **Note:** Use `--test_split val` to evaluate on the validation set.
 
 ### 6. Monitor Your Job
 
@@ -183,14 +202,12 @@ Key parameters you can adjust:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `--task` | Task type (segmentation/punctuation) | segmentation |
+| `--model_name` | Pretrained model (SikuBERT, GuwenBERT, etc.) | SIKU-BERT/sikubert |
+| `--use_qlora` | Enable QLoRA fine-tuning | True |
+| `--lora_r` | LoRA rank | 16 |
 | `--batch_size` | Training batch size | 64 |
 | `--learning_rate` | Learning rate | 2e-5 |
 | `--num_epochs` | Number of training epochs | 5 |
-| `--warmup_ratio` | Warmup ratio for learning rate | 0.1 |
-| `--weight_decay` | Weight decay for AdamW | 0.01 |
-| `--dropout` | Dropout rate | 0.1 |
-| `--cnn_kernel_sizes` | CNN kernel sizes (for cnn head) | 3 5 7 |
-| `--cnn_num_filters` | Number of CNN filters (for cnn head) | 256 |
 | `--head_type` | Classification head type | cnn |
 
 ### Classification Head Types
@@ -206,7 +223,7 @@ The model supports 3 classification head architectures:
 ### Model Architecture
 
 The model consists of:
-1. **SikuBERT** backbone (pretrained)
+1. **Backbone**: SikuBERT, GuwenBERT, SikuRoberta, etc. (supports QLoRA 4-bit loading)
 2. **Optional CNN layer** with configurable kernel sizes (when using `--head_type cnn`)
 3. **Optional CRF layer** for sequence labeling (when using `--head_type crf`)
 4. **Classification head** for token-level predictions
@@ -214,13 +231,13 @@ The model consists of:
 Example architectures:
 ```
 # softmax (FC only)
-SikuBERT → Dropout → Linear Classification
+BERT(QLoRA) → Dropout → Linear Classification
 
 # crf
-SikuBERT → Dropout → Linear → CRF
+BERT(QLoRA) → Dropout → Linear → CRF
 
 # cnn (default)
-SikuBERT → Dropout → Multi-Kernel CNN → Dropout → Linear Classification
+BERT(QLoRA) → Dropout → Multi-Kernel CNN → Dropout → Linear Classification
 ```
 
 ## 📊 Output Files
@@ -266,9 +283,7 @@ logs/
 ```bash
 python train.py \
     --task segmentation \
-    --train_path data/segmentation_train.json \
-    --val_path data/segmentation_val.json \
-    --test_path data/segmentation_test.json \
+    --data_dir data \
     --head_type cnn \
     --batch_size 32 \
     --num_epochs 5 \
@@ -338,9 +353,14 @@ done
 
 ### Model Not Loading
 
-- Ensure the model name is correct: `SIKU-BERT/sikubert`
+- Ensure the model name is correct: `SIKU-BERT/sikubert` or `ethanyt/guwenbert-base`
 - Check internet connection for downloading pretrained weights
 - Set cache directory: `export TRANSFORMERS_CACHE=/path/to/cache`
+
+### QLoRA / Bitsandbytes Issues
+
+- Ensure `bitsandbytes` is installed and CUDA is available.
+- If running on CPU, disable QLoRA (`--use_qlora False`) as 4-bit loading requires GPU.
 
 ### Job Not Starting
 
