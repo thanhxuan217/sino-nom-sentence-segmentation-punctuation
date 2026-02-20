@@ -107,7 +107,7 @@ export CNN_NUM_FILTERS=256
 # HEAD TYPE CONFIGURATION
 # ============================================================================
 # Options: "softmax" (FC only), "crf" (BERT+CRF), "cnn" (BERT+CNN)
-export HEAD_TYPE="cnn"
+export HEAD_TYPE="softmax"
 
 # ============================================================================
 # OUTPUT DIRECTORIES

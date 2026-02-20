@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=softmax_logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=softmax_logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
 #SBATCH --gres=gpu:2                      # Number of GPUs (change as needed)
-#SBATCH --mem=32G                         # Memory per node (max 64GB per server rules)
+#SBATCH --mem=16G                         # Memory per node (max 64GB per server rules)
 #SBATCH --time=24:00:00                   # Time limit (max 48h per server rules)
 #SBATCH --mail-type=BEGIN,END,FAIL        # Email notifications
 #SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
@@ -38,7 +38,7 @@ mkdir -p "${LOG_DIR}"
 # ============================================================================
 
 # Ensure required directories exist
-mkdir -p logs outputs models
+mkdir -p "${HEAD_TYPE}_logs" "${HEAD_TYPE}_outputs" "${HEAD_TYPE}_models"
 
 echo "=========================================="
 echo "Multi-GPU Training Job"
