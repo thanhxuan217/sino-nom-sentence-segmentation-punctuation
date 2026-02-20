@@ -5,27 +5,34 @@
 ```
 sikubert-slurm-training/
 │
-├── 📄 train.py                          # Main training script
+├── 📄 train.py                          # Main training entry point
+├── 📄 evaluate.py                       # Evaluation entry point (DDP support)
+├── 📄 sample_data.py                    # Utility: reservoir sampling
 ├── 📄 requirements.txt                  # Python dependencies
 ├── 📄 README.md                         # Documentation
+│
+├── 📂 src/                              # Shared source modules
+│   ├── __init__.py
+│   ├── config.py                        # TaskConfig, TrainingConfig
+│   ├── model.py                         # MultiKernelCNN, SikuBERTForTokenClassification
+│   ├── data.py                          # load_streaming_dataset, preprocess_function, streaming_collate_fn
+│   ├── utils.py                         # set_seed, apply_*_labels, predict_labels, run_test_set
+│   ├── metrics.py                       # compute_metrics (for Trainer)
+│   ├── callbacks.py                     # LimitedEvalCallback
+│   ├── checkpoint.py                    # load_model_from_trainer_checkpoint
+│   ├── evaluation.py                    # evaluate_model, run_test_set_ddp
+│   └── ddp.py                           # setup_ddp, cleanup_ddp, is_main_process
 │
 ├── 🔧 Configuration Files
 │   ├── config.slurm                      # Centralized configuration
 │   ├── run.slurm                        # SLURM script (standalone)
-│   ├── run_slurm_with_config.slurm      # SLURM script (uses config.slurm)
-│   └── run_slurm_multigpu.slurm         # Multi-GPU SLURM script
-│
-├── 🛠️ Utility Scripts
-│   ├── setup.slurm                      # Initial setup script
+│   ├── evaluate.slurm                   # Evaluation SLURM script
 │   └── slurm_helper.slurm               # Job management helper
 │
-├── 📂 data/                             # Your training data
-│   ├── segmentation_train.json          # Training set
-│   ├── segmentation_val.json            # Validation set
-│   ├── segmentation_test.json           # Test set
-│   ├── punctuation_train.json           # (Alternative task)
-│   ├── punctuation_val.json
-│   └── punctuation_test.json
+├── 📂 data/                             # Training data (Parquet format)
+│   ├── train/                           # Training split (*.parquet)
+│   ├── val/                             # Validation split (*.parquet)
+│   └── test/                            # Test split (*.parquet)
 │
 ├── 📂 models/                           # Saved model checkpoints
 │   ├── best_segmentation_model_cnn.pt   # Best segmentation model
