@@ -2,6 +2,7 @@
 torch>=2.10.0
 torchvision>=0.20.0
 transformers>=4.57.3
+tokenizers>=0.21
 datasets>=4.5.0
 scikit-learn>=1.8.0
 tqdm>=4.67.2
