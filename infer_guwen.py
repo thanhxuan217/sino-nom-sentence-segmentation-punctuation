@@ -105,28 +105,28 @@ USER_TO_GUWEN_PUNC = {v: k for k, v in zip(GUWEN_PUNC_LABELS, GUWEN_PUNC_ID_TO_U
 # ============================================================================
 
 def bmes_to_ob(bmes_labels: List[str]) -> List[str]:
-    """Convert a sequence of BMES word-segmentation labels to guwen-seg
-    style O/B sentence-boundary labels.
+    """Convert a sequence of BMES sentence-segmentation labels to guwen-seg
+    style O/B labels.
 
     Logic
     -----
-    - First character → always ``B`` (starts a sentence).
-    - After ``E`` or ``S`` (end of word) → next char is ``B``.
-    - Otherwise → ``O``.
+    Guwen-seg marks ``B`` at positions where punctuation (sentence boundary)
+    exists, and ``O`` elsewhere.
+
+    - ``E`` (end of sentence) → ``B`` (punctuation here)
+    - ``S`` (single-char sentence) → ``B`` (punctuation here)
+    - ``B`` (beginning of sentence) → ``O``
+    - ``M`` (middle of sentence) → ``O``
     """
     if not bmes_labels:
         return []
 
     ob_labels: List[str] = []
-    for i, lbl in enumerate(bmes_labels):
-        if i == 0:
+    for lbl in bmes_labels:
+        if lbl in ("E", "S"):
             ob_labels.append("B")
         else:
-            prev = bmes_labels[i - 1]
-            if prev in ("E", "S"):
-                ob_labels.append("B")
-            else:
-                ob_labels.append("O")
+            ob_labels.append("O")
     return ob_labels
 
 
@@ -463,7 +463,7 @@ def main():
         task_config = TaskConfig.create(
             task_name="segmentation",
             labels=GUWEN_SEG_LABELS,  # ["O", "B"]
-            ignore_labels=["O"],
+            ignore_labels=[],
         )
     else:
         # Evaluate in the user's Chinese punctuation label space.
