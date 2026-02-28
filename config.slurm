@@ -35,6 +35,9 @@ export TASK="segmentation"
 # MODEL CONFIGURATION
 # ============================================================================
 export MODEL_NAME="SIKU-BERT/sikubert"
+# Extended tokenizer path (leave empty to use MODEL_NAME's default tokenizer)
+# Example: export TOKENIZER_NAME="${WORKING_DIR}/sikubert_extended_vocab"
+export TOKENIZER_NAME="${WORKING_DIR}/sikubert_extended_vocab"
 export MAX_LENGTH=256
 
 # ============================================================================

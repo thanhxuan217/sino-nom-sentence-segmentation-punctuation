@@ -129,6 +129,30 @@ class SikuBERTForTokenClassification(nn.Module):
         if head_type == 'crf':
             self.crf = CRF(num_labels, batch_first=True)
 
+    def resize_token_embeddings(self, new_num_tokens: int):
+        """Resize BERT's word-embedding layer to match an extended tokenizer.
+
+        Supports both plain ``AutoModel`` and PEFT-wrapped (QLoRA) models.
+        New token embeddings are initialised with small random weights by the
+        underlying HuggingFace ``resize_token_embeddings`` method.
+
+        For QLoRA models, ``prepare_model_for_kbit_training`` freezes ALL
+        base-model parameters (including embeddings).  After resizing we
+        explicitly **unfreeze** the embedding layer so that the new token
+        vectors can be learned during fine-tuning.
+        """
+        base_model = self.bert
+        # PEFT wraps the real model — unwrap to reach resize_token_embeddings.
+        if hasattr(base_model, 'get_base_model'):
+            base_model = base_model.get_base_model()
+        base_model.resize_token_embeddings(new_num_tokens)
+
+        # Unfreeze embedding layer so new token vectors are trainable.
+        # This is essential for QLoRA where all base params are frozen.
+        if self.use_qlora:
+            for param in base_model.embeddings.word_embeddings.parameters():
+                param.requires_grad = True
+
     def forward(self, input_ids, attention_mask, labels=None, token_type_ids=None, **kwargs):
         # Chỉ lấy những gì BertModel thực sự cần
         bert_inputs = {

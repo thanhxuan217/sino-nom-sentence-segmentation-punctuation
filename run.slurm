@@ -128,6 +128,15 @@ else
     echo "No checkpoint specified or checkpoint not found: $CHECKPOINT_PATH"
 fi
 
+# Build tokenizer argument if TOKENIZER_NAME is set
+if [[ -n "$TOKENIZER_NAME" ]]; then
+    TOKENIZER_ARG="--tokenizer_name $TOKENIZER_NAME"
+    echo "Using extended tokenizer: $TOKENIZER_NAME"
+else
+    TOKENIZER_ARG=""
+    echo "Using default tokenizer from model: $MODEL_NAME"
+fi
+
 torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --task $TASK \
     --model_name $MODEL_NAME \
@@ -164,6 +173,7 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
     --log_dir $LOG_DIR \
+    $TOKENIZER_ARG \
     $CHECKPOINT_ARG
 
 # ============================================================================

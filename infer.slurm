@@ -98,6 +98,15 @@ echo ""
 # RUN INFERENCE (single GPU — stitching is inherently sequential)
 # ============================================================================
 
+# Build tokenizer argument if TOKENIZER_NAME is set
+if [[ -n "$TOKENIZER_NAME" ]]; then
+    TOKENIZER_ARG="--tokenizer_name $TOKENIZER_NAME"
+    echo "Using extended tokenizer: $TOKENIZER_NAME"
+else
+    TOKENIZER_ARG=""
+    echo "Using default tokenizer from model: $MODEL_NAME"
+fi
+
 python infer_sliding_window.py \
     --task $TASK \
     --split $INFER_SPLIT \
@@ -120,7 +129,8 @@ python infer_sliding_window.py \
     --lora_dropout $LORA_DROPOUT \
     --lora_target_modules $LORA_TARGET_MODULES \
     --output_dir $OUTPUT_DIR \
-    --log_dir $LOG_DIR
+    --log_dir $LOG_DIR \
+    $TOKENIZER_ARG
 
 # ============================================================================
 # COMPLETION

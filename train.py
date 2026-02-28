@@ -61,6 +61,9 @@ def main():
     
     # Model configuration
     parser.add_argument('--model_name', type=str, default='SIKU-BERT/sikubert')
+    parser.add_argument('--tokenizer_name', type=str, default=None,
+                       help='Tokenizer path/name (default: same as model_name). '
+                            'Use this to load an extended vocab tokenizer.')
     parser.add_argument('--max_length', type=int, default=256)
     
     # Training configuration
@@ -175,9 +178,10 @@ def main():
     logger.info(f"  Labels: {task_config.labels}")
     logger.info(f"  Num labels: {task_config.num_labels}")
     
-    # Load tokenizer
-    logger.info("\n✓ Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    # Load tokenizer (from --tokenizer_name if specified, else --model_name)
+    tokenizer_path = args.tokenizer_name or args.model_name
+    logger.info(f"\n✓ Loading tokenizer from: {tokenizer_path}")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     
     # Calculate max_steps if explicitly set to -1 (use num_epochs)
     if args.max_steps == -1 and args.use_streaming:
@@ -260,6 +264,10 @@ def main():
         use_qlora=args.use_qlora,
         qlora_config=qlora_config
     )
+    
+    # Resize embedding layer if tokenizer vocab is larger than model's default
+    model.resize_token_embeddings(len(tokenizer))
+    logger.info(f"  Embedding size aligned to tokenizer vocab: {len(tokenizer)}")
     
     # Training arguments
     training_args = TrainingArguments(

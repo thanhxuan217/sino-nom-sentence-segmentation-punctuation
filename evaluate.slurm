@@ -101,6 +101,15 @@ echo ""
 # Number of GPUs
 NGPUS=2
 
+# Build tokenizer argument if TOKENIZER_NAME is set
+if [[ -n "$TOKENIZER_NAME" ]]; then
+    TOKENIZER_ARG="--tokenizer_name $TOKENIZER_NAME"
+    echo "Using extended tokenizer: $TOKENIZER_NAME"
+else
+    TOKENIZER_ARG=""
+    echo "Using default tokenizer from model: $MODEL_NAME"
+fi
+
 torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
     --task $TASK \
     --test_split ${TEST_SPLIT:-test} \
@@ -122,7 +131,8 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
     --lora_dropout $LORA_DROPOUT \
     --lora_target_modules $LORA_TARGET_MODULES \
     --output_dir $OUTPUT_DIR \
-    --log_dir $LOG_DIR
+    --log_dir $LOG_DIR \
+    $TOKENIZER_ARG
 
 # ============================================================================
 # COMPLETION
