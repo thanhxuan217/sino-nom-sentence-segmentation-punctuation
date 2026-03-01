@@ -356,11 +356,17 @@ def stitch_documents(
                     # Build the raw→pred index map so we know where to
                     # slice in the predicted string.
                     r2p = build_raw_to_pred_map(prev_raw, prev_pred)
-                    # The valid predicted text starts at the pred index
-                    # corresponding to the first non-overlapped raw char.
-                    pred_start = r2p[prev_overlap_start_raw]
-                    # Slice the valid portion only.
-                    valid_prev_pred = valid_prev_pred[pred_start:]
+                    # Clamp to avoid IndexError when overlap fully
+                    # consumed the previous fragment.
+                    clamped = min(prev_overlap_start_raw, len(r2p) - 1)
+                    if clamped < 0 or prev_overlap_start_raw >= len(prev_raw):
+                        valid_prev_pred = ""
+                    else:
+                        # The valid predicted text starts at the pred index
+                        # corresponding to the first non-overlapped raw char.
+                        pred_start = r2p[clamped]
+                        # Slice the valid portion only.
+                        valid_prev_pred = valid_prev_pred[pred_start:]
 
                 doc_parts.append(valid_prev_pred)
 
@@ -419,7 +425,9 @@ def stitch_documents(
                 # overlap region AND were kept (not stripped)?
                 overlap_zone_start = len(prev_raw) - overlap
                 kept_in_overlap = max(0, valid_raw_end - overlap_zone_start)
-                curr_overlap_start_raw = kept_in_overlap
+                # Clamp so it never exceeds the length of the next
+                # fragment's raw text (which is `overlap` at most).
+                curr_overlap_start_raw = min(kept_in_overlap, len(raw_text) - 1) if len(raw_text) > 0 else 0
             else:
                 # prev yielded nothing useful; current starts fresh
                 # within the overlap — just skip the whole overlap.
@@ -441,8 +449,13 @@ def stitch_documents(
 
             if prev_overlap_start_raw > 0 and prev_pred:
                 r2p = build_raw_to_pred_map(prev_raw, prev_pred)
-                pred_start = r2p[prev_overlap_start_raw]
-                doc_parts.append(prev_pred[pred_start:])
+                if prev_overlap_start_raw >= len(r2p):
+                    # Entire prev fragment was already consumed — nothing
+                    # new to append.
+                    pass
+                else:
+                    pred_start = r2p[prev_overlap_start_raw]
+                    doc_parts.append(prev_pred[pred_start:])
             else:
                 doc_parts.append(prev_pred)
 
@@ -477,8 +490,11 @@ def stitch_documents(
     if prev_pred is not None:
         if prev_overlap_start_raw > 0:
             r2p = build_raw_to_pred_map(prev_raw, prev_pred)
-            pred_start = r2p[prev_overlap_start_raw]
-            doc_parts.append(prev_pred[pred_start:])
+            if prev_overlap_start_raw >= len(r2p):
+                pass  # fully consumed, nothing to append
+            else:
+                pred_start = r2p[prev_overlap_start_raw]
+                doc_parts.append(prev_pred[pred_start:])
         else:
             doc_parts.append(prev_pred)
 
