@@ -1,6 +1,5 @@
 # Configuration file for SikuBERT Training
 # This file can be sourced in the SLURM script for easier parameter management
-
 # ============================================================================
 # SERVER RULES REMINDER (IMPORTANT!)
 # ============================================================================
@@ -23,13 +22,13 @@ export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 # Run 'sinfo -N' to see available nodes
 export GPU_NODE="gpu04"  # Available: gpu01, gpu02, gpu03, gpu04
 # export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
-export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
+export DATA_DIR="${WORKING_DIR}/data_punc"  # Local storage for small datasets (slower)
 
 # ============================================================================
 # TASK CONFIGURATION
 # ============================================================================
 # Options: "segmentation" or "punctuation"
-export TASK="segmentation"
+export TASK="punctuation"
 
 # ============================================================================
 # MODEL CONFIGURATION
@@ -68,7 +67,7 @@ export EARLY_STOPPING_PATIENCE=5
 # Training steps (based on 5 epochs of dataset)
 export MAX_STEPS=217040  # 5 epochs 43,408 steps/epoch
 export EVAL_STEPS=4341   # ~10% of one epoch (evaluate ~10 times per epoch)
-export SAVE_STEPS=4341
+export SAVE_STEPS=8682
 export LOGGING_STEPS=50 # Log every 100 steps
 export MAX_EVAL_SAMPLES=6000  # Reduced to prevent OOM during evaluation
 
@@ -110,7 +109,7 @@ export CNN_NUM_FILTERS=256
 # HEAD TYPE CONFIGURATION
 # ============================================================================
 # Options: "softmax" (FC only), "crf" (BERT+CRF), "cnn" (BERT+CNN)
-export HEAD_TYPE="softmax"
+export HEAD_TYPE="cnn"
 
 # ============================================================================
 # OUTPUT DIRECTORIES
@@ -131,7 +130,7 @@ export TEST_SPLIT="test"
 # For Trainer checkpoints: point to the checkpoint DIRECTORY (e.g., outputs/checkpoint-XXXX)
 # For legacy .pt files: point to the .pt file directly
 # UPDATE THIS to your actual best checkpoint path!
-export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/final_segmentation_model_cnn"
+export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/final_punctuation_model_cnn"
 
 # ============================================================================
 # MULTI-PHASE TRAINING (Resume from checkpoint)

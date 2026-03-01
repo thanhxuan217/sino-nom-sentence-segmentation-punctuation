@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=softmax_logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=softmax_logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=cnn_logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=cnn_logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
@@ -36,9 +36,6 @@ mkdir -p "${LOG_DIR}"
 # ============================================================================
 # SETUP ENVIRONMENT
 # ============================================================================
-
-# Ensure required directories exist
-mkdir -p "${HEAD_TYPE}_logs" "${HEAD_TYPE}_outputs" "${HEAD_TYPE}_models"
 
 echo "=========================================="
 echo "Multi-GPU Training Job"
