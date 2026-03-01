@@ -163,6 +163,7 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --cnn_num_filters $CNN_NUM_FILTERS \
     --head_type $HEAD_TYPE \
     $USE_QLORA_FLAG \
+    $USE_WEIGHTED_LOSS_FLAG \
     --lora_r $LORA_R \
     --lora_alpha $LORA_ALPHA \
     --lora_dropout $LORA_DROPOUT \

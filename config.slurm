@@ -112,6 +112,13 @@ export CNN_NUM_FILTERS=256
 export HEAD_TYPE="cnn"
 
 # ============================================================================
+# WEIGHTED LOSS CONFIGURATION
+# ============================================================================
+# Enable weighted cross-entropy loss to handle class imbalance
+# Set to "--use_weighted_loss" to enable, or "" to disable
+export USE_WEIGHTED_LOSS_FLAG="--use_weighted_loss"
+
+# ============================================================================
 # OUTPUT DIRECTORIES
 # ============================================================================
 export OUTPUT_DIR="${WORKING_DIR}/${HEAD_TYPE}_outputs"
