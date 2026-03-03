@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=softmax_logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=softmax_logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --output=cnn_logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=cnn_logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
@@ -36,9 +36,6 @@ mkdir -p "${LOG_DIR}"
 # ============================================================================
 # SETUP ENVIRONMENT
 # ============================================================================
-
-# Ensure required directories exist
-mkdir -p "${HEAD_TYPE}_logs" "${HEAD_TYPE}_outputs" "${HEAD_TYPE}_models"
 
 echo "=========================================="
 echo "Multi-GPU Training Job"
@@ -128,6 +125,15 @@ else
     echo "No checkpoint specified or checkpoint not found: $CHECKPOINT_PATH"
 fi
 
+# Build tokenizer argument if TOKENIZER_NAME is set
+if [[ -n "$TOKENIZER_NAME" ]]; then
+    TOKENIZER_ARG="--tokenizer_name $TOKENIZER_NAME"
+    echo "Using extended tokenizer: $TOKENIZER_NAME"
+else
+    TOKENIZER_ARG=""
+    echo "Using default tokenizer from model: $MODEL_NAME"
+fi
+
 torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --task $TASK \
     --model_name $MODEL_NAME \
@@ -164,6 +170,7 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --output_dir $OUTPUT_DIR \
     --model_save_dir $MODEL_SAVE_DIR \
     --log_dir $LOG_DIR \
+    $TOKENIZER_ARG \
     $CHECKPOINT_ARG
 
 # ============================================================================

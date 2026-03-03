@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH --job-name=sikubert_eval           # Job name
-#SBATCH --output=logs/eval_%j.out  # Output file
-#SBATCH --error=logs/eval_%j.err   # Error file
-#SBATCH --partition=batch                  # Partition name
-#SBATCH --nodes=1                          # Number of nodes
-#SBATCH --ntasks=1                         # Number of tasks
-#SBATCH --cpus-per-task=16                 # CPUs per task
-#SBATCH --gres=gpu:2                       # 2 GPUs for parallel inference
-#SBATCH --mem=16G                          # Memory per node
-#SBATCH --time=10:00:00                     # Time limit
-#SBATCH --mail-type=BEGIN,END,FAIL         # Email notifications
-#SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
+#SBATCH --job-name=sikubert_infer            # Job name
+#SBATCH --output=logs/infer_%j.out           # Output file
+#SBATCH --error=logs/infer_%j.err            # Error file
+#SBATCH --partition=batch                    # Partition name
+#SBATCH --nodes=1                            # Number of nodes
+#SBATCH --ntasks=1                           # Number of tasks
+#SBATCH --cpus-per-task=16                   # CPUs per task
+#SBATCH --gres=gpu:1                         # 1 GPU (stitching is sequential)
+#SBATCH --mem=16G                            # Memory per node
+#SBATCH --time=24:00:00                      # Time limit
+#SBATCH --mail-type=BEGIN,END,FAIL           # Email notifications
+#SBATCH --mail-user=xuanhuynh233@gmail.com   # Your email
 
 set -euo pipefail
 
@@ -27,19 +27,17 @@ source config.slurm
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 
 # Ensure log directory exists
-mkdir -p "${LOG_DIR}"
+mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
 
 # ============================================================================
 # SETUP ENVIRONMENT
 # ============================================================================
 
-mkdir -p logs outputs
-
 echo "=========================================="
-echo "Multi-GPU Evaluation Job"
+echo "Sliding Window Inference Job"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
-echo "Number of GPUs: ${SLURM_GPUS_ON_NODE:-${SLURM_GPUS_PER_NODE:-2}}"
+echo "Number of GPUs: ${SLURM_GPUS_ON_NODE:-1}"
 echo "Start Time: $(date)"
 echo "=========================================="
 
@@ -70,36 +68,35 @@ else
 fi
 echo ""
 
+# ---  Inference-specific overrides  ---
+# Which split to run inference on (default: test)
+INFER_SPLIT="${INFER_SPLIT:-test}"
+
+# Overlap size used during data chunking (must match the parquet creation)
+INFER_OVERLAP="${INFER_OVERLAP:-128}"
+
 echo ""
 echo "=========================================="
-echo "EVALUATION CONFIGURATION"
+echo "INFERENCE CONFIGURATION"
 echo "=========================================="
 echo "Task: $TASK"
-echo "Test Split: ${TEST_SPLIT:-test}"
+echo "Split: $INFER_SPLIT"
 echo "Model: $MODEL_NAME"
 echo "Model Path: $EVAL_MODEL_PATH"
 echo "Data Dir: $DATA_DIR"
 echo ""
-echo "CNN Kernels: $CNN_KERNEL_SIZES"
-echo "CNN Filters: $CNN_NUM_FILTERS"
+echo "Overlap: $INFER_OVERLAP"
+echo "Batch Size: $BATCH_SIZE"
 echo "Head Type: $HEAD_TYPE"
-echo ""
 echo "Use QLoRA: ${USE_QLORA_FLAG:-disabled}"
-echo "LoRA Rank: $LORA_R"
-echo "LoRA Alpha: $LORA_ALPHA"
-echo "LoRA Dropout: $LORA_DROPOUT"
-echo "LoRA Target Modules: $LORA_TARGET_MODULES"
 echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "=========================================="
 echo ""
 
 # ============================================================================
-# RUN EVALUATION (Multi-GPU with torchrun)
+# RUN INFERENCE (single GPU — stitching is inherently sequential)
 # ============================================================================
-
-# Number of GPUs
-NGPUS=2
 
 # Build tokenizer argument if TOKENIZER_NAME is set
 if [[ -n "$TOKENIZER_NAME" ]]; then
@@ -110,9 +107,9 @@ else
     echo "Using default tokenizer from model: $MODEL_NAME"
 fi
 
-torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
+python infer_sliding_window.py \
     --task $TASK \
-    --test_split ${TEST_SPLIT:-test} \
+    --split $INFER_SPLIT \
     --model_path $EVAL_MODEL_PATH \
     --data_dir $DATA_DIR \
     --model_name $MODEL_NAME \
@@ -123,6 +120,7 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
     --head_type $HEAD_TYPE \
     --batch_size $BATCH_SIZE \
     --num_workers $NUM_WORKERS \
+    --overlap $INFER_OVERLAP \
     $FP16 \
     $PIN_MEMORY \
     $USE_QLORA_FLAG \
@@ -140,5 +138,5 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT evaluate.py \
 
 echo ""
 echo "=========================================="
-echo "Evaluation completed at: $(date)"
+echo "Inference completed at: $(date)"
 echo "=========================================="
