@@ -58,12 +58,19 @@ class SikuBERTForTokenClassification(nn.Module):
         cnn_kernel_sizes: list = None,
         cnn_num_filters: int = 128,
         use_qlora: bool = False,
-        qlora_config: Optional[LoraConfig] = None
+        qlora_config: Optional[LoraConfig] = None,
+        class_weights: Optional[torch.Tensor] = None
     ):
         super().__init__()
         
         self.head_type = head_type
         self.num_labels = num_labels
+        
+        # Store class weights as a buffer (moves with .to(device) automatically)
+        if class_weights is not None:
+            self.register_buffer('class_weights', class_weights)
+        else:
+            self.class_weights = None
         self.use_qlora = use_qlora
         
         # Backbone: SikuBERT
@@ -210,7 +217,7 @@ class SikuBERTForTokenClassification(nn.Module):
         else:
             # Softmax or CNN head
             if labels is not None:
-                loss_fct = nn.CrossEntropyLoss()
+                loss_fct = nn.CrossEntropyLoss(weight=self.class_weights)
                 loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
                 result['loss'] = loss
             

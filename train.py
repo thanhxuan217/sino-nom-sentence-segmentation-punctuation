@@ -11,6 +11,9 @@ import multiprocessing
 import os
 import math
 import sys
+from collections import Counter
+
+import numpy as np
 import pyarrow.parquet as pq
 from pathlib import Path
 from functools import partial
@@ -121,6 +124,10 @@ def main():
     parser.add_argument('--head_type', type=str, default='cnn',
                        choices=['softmax', 'crf', 'cnn'])
     
+    # Loss configuration
+    parser.add_argument('--use_weighted_loss', action='store_true', default=False,
+                       help='Use weighted cross-entropy loss to handle class imbalance')
+    
     # Output configuration
     parser.add_argument('--output_dir', type=str, default='outputs')
     parser.add_argument('--model_save_dir', type=str, default='models')
@@ -177,6 +184,42 @@ def main():
     logger.info(f"\n✓ Task: {task_config.task_name}")
     logger.info(f"  Labels: {task_config.labels}")
     logger.info(f"  Num labels: {task_config.num_labels}")
+    
+    # ====================================================================
+    # Compute class weights for Weighted Cross-Entropy (if enabled)
+    # ====================================================================
+    class_weights = None
+    if args.use_weighted_loss:
+        logger.info("\n✓ Computing class weights from training data...")
+        label_counter = Counter()
+        train_dir = Path(args.data_dir) / "train"
+        parquet_files = sorted(train_dir.glob("*.parquet"))
+        
+        for pf in parquet_files:
+            table = pq.read_table(pf, columns=["labels"])
+            for label_seq in table.column("labels").to_pylist():
+                label_counter.update(label_seq)
+        
+        total_samples = sum(label_counter.values())
+        num_classes = task_config.num_labels
+        
+        # Inverse-frequency weights: weight_i = total / (num_classes * count_i)
+        weights = []
+        for label in task_config.labels:
+            count = label_counter.get(label, 1)  # Avoid division by zero
+            w = total_samples / (num_classes * count)
+            weights.append(w)
+        
+        # Normalize so minimum weight = 1.0
+        min_w = min(weights)
+        weights = [w / min_w for w in weights]
+        
+        class_weights = torch.tensor(weights, dtype=torch.float32)
+        
+        logger.info(f"  Label counts: {dict(label_counter)}")
+        logger.info(f"  Class weights: {class_weights.tolist()}")
+        for label, w in zip(task_config.labels, weights):
+            logger.info(f"    {label}: {w:.4f} (count={label_counter.get(label, 0):,})")
     
     # Load tokenizer (from --tokenizer_name if specified, else --model_name)
     tokenizer_path = args.tokenizer_name or args.model_name
@@ -262,7 +305,8 @@ def main():
         cnn_kernel_sizes=args.cnn_kernel_sizes,
         cnn_num_filters=args.cnn_num_filters,
         use_qlora=args.use_qlora,
-        qlora_config=qlora_config
+        qlora_config=qlora_config,
+        class_weights=class_weights
     )
     
     # Resize embedding layer if tokenizer vocab is larger than model's default
