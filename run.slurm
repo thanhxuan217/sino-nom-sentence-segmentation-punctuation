@@ -104,6 +104,10 @@ echo "LoRA Dropout: $LORA_DROPOUT"
 echo "LoRA Target Modules: $LORA_TARGET_MODULES"
 echo "Use Streaming: ${USE_STREAMING:-True}"
 echo ""
+echo "Loss Type: $LOSS_TYPE"
+echo "Focal Gamma: $FOCAL_GAMMA"
+echo "Weighted Loss: ${USE_WEIGHTED_LOSS_FLAG:-disabled}"
+echo ""
 echo "Output Dir: $OUTPUT_DIR"
 echo "Model Save Dir: $MODEL_SAVE_DIR"
 echo "=========================================="
@@ -164,6 +168,8 @@ torchrun --nproc_per_node=$NGPUS --master_port=$MASTER_PORT train.py \
     --head_type $HEAD_TYPE \
     $USE_QLORA_FLAG \
     $USE_WEIGHTED_LOSS_FLAG \
+    --loss_type $LOSS_TYPE \
+    --focal_gamma $FOCAL_GAMMA \
     --lora_r $LORA_R \
     --lora_alpha $LORA_ALPHA \
     --lora_dropout $LORA_DROPOUT \

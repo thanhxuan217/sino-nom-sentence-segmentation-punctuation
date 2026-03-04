@@ -112,11 +112,18 @@ export CNN_NUM_FILTERS=256
 export HEAD_TYPE="cnn"
 
 # ============================================================================
-# WEIGHTED LOSS CONFIGURATION
+# LOSS CONFIGURATION
 # ============================================================================
-# Enable weighted cross-entropy loss to handle class imbalance
+# Enable weighted loss to handle class imbalance
 # Set to "--use_weighted_loss" to enable, or "" to disable
 export USE_WEIGHTED_LOSS_FLAG="--use_weighted_loss"
+
+# Loss function type: "ce" (CrossEntropy) or "focal" (Focal Loss)
+export LOSS_TYPE="ce"
+
+# Focal Loss gamma (focusing parameter), only used when LOSS_TYPE="focal"
+# Higher gamma → more focus on hard examples. gamma=0 is equivalent to CE.
+export FOCAL_GAMMA=2.0
 
 # ============================================================================
 # OUTPUT DIRECTORIES

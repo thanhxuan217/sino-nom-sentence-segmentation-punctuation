@@ -17,6 +17,45 @@ from peft import (
 from torchcrf import CRF
 
 
+class FocalLoss(nn.Module):
+    """Focal Loss (Lin et al., 2017)
+    
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    
+    Args:
+        gamma: Focusing parameter. Higher gamma → more focus on hard examples.
+               gamma=0 is equivalent to standard cross-entropy. Default: 2.0
+        weight: Per-class weights (alpha), same as CrossEntropyLoss weight.
+        ignore_index: Label index to ignore. Default: -100
+    """
+    
+    def __init__(self, gamma: float = 2.0, weight: Optional[torch.Tensor] = None,
+                 ignore_index: int = -100):
+        super().__init__()
+        self.gamma = gamma
+        self.ignore_index = ignore_index
+        # Register weight as buffer so it moves with .to(device)
+        if weight is not None:
+            self.register_buffer('weight', weight)
+        else:
+            self.weight = None
+    
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            inputs: [N, C] raw logits (before softmax)
+            targets: [N] class indices
+        """
+        ce_loss = nn.functional.cross_entropy(
+            inputs, targets, weight=self.weight,
+            ignore_index=self.ignore_index, reduction='none'
+        )
+        # p_t = probability of the correct class
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        return focal_loss.mean()
+
+
 # ============================================================================
 # MODEL ARCHITECTURE
 # ============================================================================
@@ -59,18 +98,31 @@ class SikuBERTForTokenClassification(nn.Module):
         cnn_num_filters: int = 128,
         use_qlora: bool = False,
         qlora_config: Optional[LoraConfig] = None,
-        class_weights: Optional[torch.Tensor] = None
+        class_weights: Optional[torch.Tensor] = None,
+        loss_type: str = 'ce',
+        focal_gamma: float = 2.0
     ):
         super().__init__()
         
         self.head_type = head_type
         self.num_labels = num_labels
+        self.loss_type = loss_type
         
         # Store class weights as a buffer (moves with .to(device) automatically)
         if class_weights is not None:
             self.register_buffer('class_weights', class_weights)
         else:
             self.class_weights = None
+        
+        # Build loss function
+        if loss_type == 'focal':
+            self.loss_fct = FocalLoss(
+                gamma=focal_gamma,
+                weight=class_weights
+            )
+        else:
+            self.loss_fct = None  # will use nn.CrossEntropyLoss in forward
+        
         self.use_qlora = use_qlora
         
         # Backbone: SikuBERT
@@ -217,8 +269,11 @@ class SikuBERTForTokenClassification(nn.Module):
         else:
             # Softmax or CNN head
             if labels is not None:
-                loss_fct = nn.CrossEntropyLoss(weight=self.class_weights)
-                loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+                if self.loss_type == 'focal':
+                    loss = self.loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
+                else:
+                    loss_fct = nn.CrossEntropyLoss(weight=self.class_weights)
+                    loss = loss_fct(emissions.view(-1, self.num_labels), labels.view(-1))
                 result['loss'] = loss
             
             result['predictions'] = torch.argmax(emissions, dim=-1)
