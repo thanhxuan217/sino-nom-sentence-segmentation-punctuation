@@ -126,7 +126,12 @@ def main():
     
     # Loss configuration
     parser.add_argument('--use_weighted_loss', action='store_true', default=False,
-                       help='Use weighted cross-entropy loss to handle class imbalance')
+                       help='Use weighted loss to handle class imbalance')
+    parser.add_argument('--loss_type', type=str, default='ce',
+                       choices=['ce', 'focal'],
+                       help='Loss function: ce (CrossEntropy) or focal (Focal Loss)')
+    parser.add_argument('--focal_gamma', type=float, default=2.0,
+                       help='Focal Loss gamma (focusing parameter). Default: 2.0')
     
     # Output configuration
     parser.add_argument('--output_dir', type=str, default='outputs')
@@ -306,7 +311,9 @@ def main():
         cnn_num_filters=args.cnn_num_filters,
         use_qlora=args.use_qlora,
         qlora_config=qlora_config,
-        class_weights=class_weights
+        class_weights=class_weights,
+        loss_type=args.loss_type,
+        focal_gamma=args.focal_gamma
     )
     
     # Resize embedding layer if tokenizer vocab is larger than model's default
