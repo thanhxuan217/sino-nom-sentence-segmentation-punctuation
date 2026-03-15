@@ -10,7 +10,9 @@ per-domain Precision / Recall / F1 metrics for debugging.
 Outputs:
   1. {split}_{task}_domain_eval.jsonl  — per-document gold vs predicted text
   2. {split}_{task}_domain_metrics.json — per-domain metric breakdown
-  3. Console / log summary table sorted by F1 score
+  3. {txt_output_dir}/pred/{domain}/{filename}.txt — predicted text files
+  4. {txt_output_dir}/gold/{domain}/{filename}.txt — gold text files
+  5. Console / log summary table sorted by F1 score
 """
 
 import argparse
@@ -37,6 +39,7 @@ from src.config import TaskConfig
 from src.data import load_streaming_dataset, preprocess_function, streaming_collate_fn
 from src.model import SikuBERTForTokenClassification
 from src.utils import apply_punctuation_labels, apply_segmentation_inline
+from src.export import export_single_document, prepare_export_dir
 
 # Reuse sliding-window pipeline from infer_sliding_window
 from infer_sliding_window import (
@@ -178,6 +181,8 @@ def main():
                         help="Limit number of documents for quick debugging")
     parser.add_argument("--sample_per_domain", type=int, default=3,
                         help="Number of sample outputs to print per domain")
+    parser.add_argument("--txt_output_dir", type=str, default=None,
+                        help="Directory for .txt file export (default: {output_dir}/{split}_{task}_txt)")
 
     args = parser.parse_args()
 
@@ -379,6 +384,12 @@ def main():
 
     total_docs = 0
 
+    # .txt export directory
+    txt_dir = args.txt_output_dir or os.path.join(
+        args.output_dir, f"{args.split}_{args.task}_txt"
+    )
+    prepare_export_dir(txt_dir, logger=logger)
+
     with open(output_path, "w", encoding="utf-8") as f:
         for doc_text, gold_labels, pred_labels, domain, filename in doc_gen:
             # Build gold text from raw chars + gold labels
@@ -451,6 +462,16 @@ def main():
 
             total_docs += 1
 
+            # Export as .txt file (streaming — one file at a time)
+            export_single_document(
+                pred_text=doc_text,
+                gold_text=gold_text,
+                domain=domain,
+                filename=filename,
+                output_dir=txt_dir,
+                write_gold=True,
+            )
+
             if total_docs % 500 == 0:
                 logger.info(f"  Processed {total_docs} documents...")
 
@@ -459,6 +480,7 @@ def main():
                 break
 
     logger.info(f"\n✓ Wrote {total_docs} documents to {output_path}")
+    logger.info(f"✓ Exported {total_docs} .txt files to {txt_dir}")
 
     # ------------------------------------------------------------------
     # Compute per-domain metrics
