@@ -83,6 +83,11 @@ def preprocess_function(examples, tokenizer, task_config, max_length=256, keep_r
     if keep_raw:
         tokenized_inputs["raw_text"] = examples["text"]
         tokenized_inputs["raw_labels"] = examples["labels"]
+        # Propagate domain/filename for per-domain evaluation
+        if "domain" in examples:
+            tokenized_inputs["domain"] = examples["domain"]
+        if "filename" in examples:
+            tokenized_inputs["filename"] = examples["filename"]
     
     return tokenized_inputs
 
@@ -103,4 +108,9 @@ def streaming_collate_fn(batch):
         result['raw_text'] = [item['raw_text'] for item in batch]
     if 'raw_labels' in batch[0]:
         result['raw_labels'] = [item['raw_labels'] for item in batch]
+    # Propagate domain/filename for per-domain evaluation
+    if 'domain' in batch[0]:
+        result['domain'] = [item['domain'] for item in batch]
+    if 'filename' in batch[0]:
+        result['filename'] = [item['filename'] for item in batch]
     return result

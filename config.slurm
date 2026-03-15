@@ -22,7 +22,7 @@ export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 # Run 'sinfo -N' to see available nodes
 export GPU_NODE="gpu04"  # Available: gpu01, gpu02, gpu03, gpu04
 # export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
-export DATA_DIR="${WORKING_DIR}/data_punc"  # Local storage for small datasets (slower)
+export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
 
 # ============================================================================
 # TASK CONFIGURATION
@@ -36,7 +36,8 @@ export TASK="punctuation"
 export MODEL_NAME="SIKU-BERT/sikubert"
 # Extended tokenizer path (leave empty to use MODEL_NAME's default tokenizer)
 # Example: export TOKENIZER_NAME="${WORKING_DIR}/sikubert_extended_vocab"
-export TOKENIZER_NAME="${WORKING_DIR}/sikubert_extended_vocab"
+# export TOKENIZER_NAME="${WORKING_DIR}/sikubert_extended_vocab"
+export TOKENIZER_NAME=""
 export MAX_LENGTH=256
 
 # ============================================================================
@@ -116,8 +117,8 @@ export HEAD_TYPE="cnn"
 # ============================================================================
 # Enable weighted loss to handle class imbalance
 # Set to "--use_weighted_loss" to enable, or "" to disable
-export USE_WEIGHTED_LOSS_FLAG="--use_weighted_loss"
-
+# export USE_WEIGHTED_LOSS_FLAG="--use_weighted_loss"
+export USE_WEIGHTED_LOSS_FLAG=""
 # Loss function type: "ce" (CrossEntropy) or "focal" (Focal Loss)
 export LOSS_TYPE="ce"
 
