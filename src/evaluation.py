@@ -181,11 +181,12 @@ def evaluate_model(model, dataloader, task_config, device, use_amp: bool = False
                 valid_preds = valid_preds[keep_mask]
                 valid_labels = valid_labels[keep_mask]
             
-            # Update confusion matrix
-            conf_matrix += confusion_matrix(
-                valid_labels, valid_preds,
-                labels=list(range(num_labels))
-            )
+            # Update confusion matrix (skip empty batches)
+            if len(valid_labels) > 0:
+                conf_matrix += confusion_matrix(
+                    valid_labels, valid_preds,
+                    labels=list(range(num_labels))
+                )
             
             # Delete CPU arrays
             del predictions, labels_cpu, mask, valid_preds, valid_labels
