@@ -1,0 +1,6 @@
+sikubert_cpu
+logs
+pretrained
+**pycache**
+models/final_punctuation_model_cnn
+models/final_segmentation_model_cnn

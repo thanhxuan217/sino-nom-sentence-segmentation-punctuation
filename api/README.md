@@ -45,8 +45,8 @@ Make sure you are in the project root directory, then install the required packa
 
 ```bash
 # Optional: Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Or .\.venv\Scripts\Activate.ps1 on Windows
+conda create -n sinonom python=3.11
+conda activate sinonom
 
 # Install requirements
 pip install -r requirements.txt
@@ -134,7 +134,7 @@ curl -X POST "http://localhost:8000/segment" \
      -F "text=天地玄黃宇宙洪荒"
 ```
 
-**Process a file (.txt, .docx, .pdf):**
+**Process a file (.txt, .docx):**
 ```bash
 curl -X POST "http://localhost:8000/segment" \
      -F "file=@/path/to/document.docx"
@@ -148,8 +148,8 @@ curl -X POST "http://localhost:8000/punctuate" \
      -F "text=天地玄黃宇宙洪荒"
 ```
 
-**Process a file (.txt, .docx, .pdf):**
+**Process a file (.txt, .docx):**
 ```bash
 curl -X POST "http://localhost:8000/punctuate" \
-     -F "file=@/path/to/document.pdf"
+     -F "file=@/path/to/document.docx"
 ```

@@ -1,5 +1,5 @@
 # =============================================================================
-# Sino-Nom Sentence Segmentation & Punctuation — API Server
+# Sino-Nom Sentence Segmentation & Punctuation — API Server (CPU Only)
 # =============================================================================
 # Build:
 #   docker build -t sinonom-api .
@@ -8,14 +8,9 @@
 #   docker run -p 8000:8000 \
 #     -v /path/to/models:/app/models \
 #     sinonom-api
-#
-# Run (GPU — requires nvidia-container-toolkit):
-#   docker run --gpus all -p 8000:8000 \
-#     -v /path/to/models:/app/models \
-#     sinonom-api
 # =============================================================================
 
-FROM python:3.11-slim AS base
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -25,16 +20,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
-COPY requirements.txt .
+COPY requirements-cpu.txt .
 
-# Install PyTorch CPU (lighter image) + project dependencies + FastAPI
-RUN pip install --no-cache-dir \
-    --extra-index-url https://download.pytorch.org/whl/cpu \
-    torch torchvision && \
-    pip install --no-cache-dir \
-    transformers tokenizers datasets scikit-learn tqdm \
-    accelerate numpy pytorch-crf peft safetensors \
-    fastapi uvicorn[standard] python-multipart pypdf python-docx
+# Install all dependencies (PyTorch CPU + project packages)
+RUN pip install --no-cache-dir -r requirements-cpu.txt
 
 # Copy source code
 COPY src/ ./src/

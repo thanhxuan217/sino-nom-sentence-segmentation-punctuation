@@ -181,15 +181,8 @@ def parse_file_content(file: UploadFile) -> str:
             raise RuntimeError("python-docx is not installed.")
         doc = docx.Document(io.BytesIO(file_bytes))
         return "\n".join([para.text for para in doc.paragraphs]).strip()
-    elif file.filename.endswith(".pdf"):
-        try:
-            import pypdf
-        except ImportError:
-            raise RuntimeError("pypdf is not installed.")
-        reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-        return "\n".join([page.extract_text() for page in reader.pages if page.extract_text()]).strip()
     else:
-        raise ValueError("Unsupported file extension. Please upload .txt, .docx or .pdf.")
+        raise ValueError("Unsupported file extension. Please upload .txt, .docx.")
 
 def preprocess_input_text(text: str) -> str:
     """Remove punctuation marks before inference."""
@@ -228,7 +221,7 @@ async def health():
 )
 async def segment(
     text: Optional[str] = Form(None, description="Đoạn văn bản trực tiếp"),
-    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx, .pdf)")
+    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx)")
 ):
     """Segment raw classical Chinese text into words / phrases.
 
@@ -308,7 +301,7 @@ async def segment(
 )
 async def punctuate(
     text: Optional[str] = Form(None, description="Đoạn văn bản trực tiếp"),
-    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx, .pdf)")
+    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx)")
 ):
     """Insert punctuation marks into raw classical Chinese text.
 
