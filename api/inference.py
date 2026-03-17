@@ -93,7 +93,7 @@ class ModelManager:
         self,
         task_name: str,
         model_path: str,
-        model_name: str = "SIKU-BERT/sikubert",
+        model_name: str = "pretrained/sikubert",
         tokenizer_name: Optional[str] = None,
         max_length: int = 256,
         overlap: int = 128,

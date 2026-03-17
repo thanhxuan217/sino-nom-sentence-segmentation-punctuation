@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Form, File, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from typing import Union
+from typing import Union, Optional
 
 from api.inference import ModelManager
 from api.schemas import (
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION (via environment variables with sensible defaults)
 # ============================================================================
 
-MODEL_NAME = os.getenv("MODEL_NAME", "SIKU-BERT/sikubert")
+MODEL_NAME = os.getenv("MODEL_NAME", "pretrained/sikubert")
 TOKENIZER_NAME = os.getenv("TOKENIZER_NAME", None)
 MAX_LENGTH = int(os.getenv("MAX_LENGTH", "256"))
 OVERLAP = int(os.getenv("OVERLAP", "128"))
@@ -227,8 +227,8 @@ async def health():
     tags=["Inference"],
 )
 async def segment(
-    text: str = Form(None, description="Đoạn văn bản trực tiếp"),
-    file: UploadFile = File(None, description="File cần xử lý (hỗ trợ .txt, .docx, .pdf)")
+    text: Optional[str] = Form(None, description="Đoạn văn bản trực tiếp"),
+    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx, .pdf)")
 ):
     """Segment raw classical Chinese text into words / phrases.
 
@@ -307,8 +307,8 @@ async def segment(
     tags=["Inference"],
 )
 async def punctuate(
-    text: str = Form(None, description="Đoạn văn bản trực tiếp"),
-    file: UploadFile = File(None, description="File cần xử lý (hỗ trợ .txt, .docx, .pdf)")
+    text: Optional[str] = Form(None, description="Đoạn văn bản trực tiếp"),
+    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx, .pdf)")
 ):
     """Insert punctuation marks into raw classical Chinese text.
 

@@ -2,78 +2,9 @@
 
 This repository contains code to fine-tune SikuBERT, GuwenBERT, SikuRoberta, and other classical Chinese language models with QLoRA and CNN layers for token classification tasks (sentence segmentation and punctuation).
 
-## API Setup and Run
+## API Deployment & Usage
 
-This section covers the FastAPI service in `api/main.py`.
-
-### 1. Install Dependencies
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-On Windows PowerShell:
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-### 2. Prepare Models
-
-Place the trained checkpoints at:
-- `models/final_segmentation_model_cnn`
-- `models/final_punctuation_model_cnn`
-
-Optional environment variables (defaults are shown in code):
-```
-MODEL_NAME=SIKU-BERT/sikubert
-TOKENIZER_NAME=
-SEG_MODEL_PATH=models/final_segmentation_model_cnn
-PUNCT_MODEL_PATH=models/final_punctuation_model_cnn
-MAX_LENGTH=256
-OVERLAP=128
-HEAD_TYPE=cnn
-CNN_NUM_FILTERS=256
-DROPOUT=0.1
-```
-
-### 3. Run the API
-
-```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-```
-
-For local development with auto-reload:
-```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 4. Test the API
-
-Health check:
-```bash
-curl http://localhost:8000/health
-```
-
-Segment text:
-```bash
-curl -X POST http://localhost:8000/segment \
-  -F "text=your text here"
-```
-
-Punctuate a file:
-```bash
-curl -X POST http://localhost:8000/punctuate \
-  -F "file=@/path/to/input.txt"
-```
-
-Notes:
-- Requests use `multipart/form-data`.
-- Provide exactly one of `text` or `file`.
-- Long inputs are processed with sliding-window overlap `128` to avoid truncation.
+For running the trained models as a REST API (including Setup, Docker instructions, and Model downloading), please refer to the dedicated **[API Documentation](api/README.md)**.
 
 ## 🚀 Quick Start
 
