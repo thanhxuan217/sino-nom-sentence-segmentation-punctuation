@@ -213,15 +213,17 @@ def infer_batches(
     max_length: int,
     use_amp: bool = False,
     logger: Optional[logging.Logger] = None,
-) -> Generator[Tuple[str, str, List[str], List[str]], None, None]:
-    """Yield (raw_text, pred_text, pred_labels, gold_labels) for every
-    sample in the streaming dataloader, running inference in batches.
+) -> Generator[Tuple[str, str, List[str], List[str], str, str], None, None]:
+    """Yield (raw_text, pred_text, pred_labels, gold_labels, domain, filename)
+    for every sample in the streaming dataloader, running inference in batches.
 
     This is a generator so that the downstream stitching logic can
     process results one-by-one without holding the entire dataset in RAM.
 
     ``gold_labels`` are the ground-truth per-character labels read
     straight from the parquet dataset (via ``keep_raw=True``).
+    ``domain`` and ``filename`` come from the parquet metadata (may be
+    empty strings if not present in the dataset).
     """
     model.eval()
     total_samples = 0
@@ -234,6 +236,9 @@ def infer_batches(
             raw_texts: List[str] = batch["raw_text"]
             # Ground-truth labels per character (list of list[str]).
             raw_labels_list: List[List[str]] = batch.get("raw_labels", [None] * batch_size)
+            # Domain and filename metadata (may not be present).
+            domains: List[str] = batch.get("domain", [""] * batch_size)
+            filenames: List[str] = batch.get("filename", [""] * batch_size)
 
             # --- Forward pass ---
             with torch.amp.autocast("cuda", enabled=use_amp and torch.cuda.is_available()):
@@ -248,6 +253,8 @@ def infer_batches(
             for i in range(batch_size):
                 raw_text = raw_texts[i]
                 gold_labels = raw_labels_list[i] if raw_labels_list[i] is not None else []
+                domain = domains[i] if i < len(domains) else ""
+                filename = filenames[i] if i < len(filenames) else ""
                 pred_text, pred_labels = decode_sample(
                     raw_text=raw_text,
                     token_preds=predictions[i],
@@ -255,7 +262,7 @@ def infer_batches(
                     task_config=task_config,
                     max_length=max_length,
                 )
-                yield raw_text, pred_text, pred_labels, gold_labels
+                yield raw_text, pred_text, pred_labels, gold_labels, domain, filename
                 total_samples += 1
 
             # --- Free GPU memory ---
@@ -272,14 +279,15 @@ def infer_batches(
 # ============================================================================
 
 def stitch_documents(
-    fragment_stream: Generator[Tuple[str, str, List[str], List[str]], None, None],
+    fragment_stream: Generator[Tuple[str, str, List[str], List[str], str, str], None, None],
     task_name: str,
     overlap: int = OVERLAP,
     logger: Optional[logging.Logger] = None,
-) -> Generator[Tuple[str, List[str], List[str]], None, None]:
-    """Consume a stream of (raw_text, pred_text, pred_labels, gold_labels)
-    fragments and yield fully-stitched documents together with their
-    stitched gold and predicted per-character labels.
+) -> Generator[Tuple[str, List[str], List[str], str, str], None, None]:
+    """Consume a stream of (raw_text, pred_text, pred_labels, gold_labels,
+    domain, filename) fragments and yield fully-stitched documents together
+    with their stitched gold and predicted per-character labels, plus the
+    domain and filename metadata (taken from the first fragment).
 
     This is the core "Parallel Sliding Window" reconstruction algorithm.
     It maintains a two-fragment buffer (prev / current) and uses the
@@ -291,7 +299,8 @@ def stitch_documents(
 
     Yields
     ------
-    (pred_text, gold_labels, pred_labels) for each completed document.
+    (pred_text, gold_labels, pred_labels, domain, filename) for each
+    completed document.
     """
 
     # ------------------------------------------------------------------
@@ -316,9 +325,13 @@ def stitch_documents(
     # it).  For the first fragment in a document this is 0.
     prev_overlap_start_raw: int = 0
 
+    # Domain/filename for the current document (from the first fragment).
+    doc_domain: str = ""
+    doc_filename: str = ""
+
     doc_count = 0
 
-    for raw_text, pred_text, pred_labels, gold_labels in fragment_stream:
+    for raw_text, pred_text, pred_labels, gold_labels, domain, filename in fragment_stream:
 
         if prev_raw is None:
             # ============================================================
@@ -329,6 +342,8 @@ def stitch_documents(
             prev_pred_labels = pred_labels
             prev_gold_labels = gold_labels
             prev_overlap_start_raw = 0
+            doc_domain = domain
+            doc_filename = filename
             continue
 
         # ================================================================
@@ -468,7 +483,7 @@ def stitch_documents(
             doc_count += 1
             if logger and doc_count % 500 == 0:
                 logger.info(f"  Stitched document #{doc_count} ({len(completed_doc)} chars)")
-            yield completed_doc, list(doc_gold_labels), list(doc_pred_labels)
+            yield completed_doc, list(doc_gold_labels), list(doc_pred_labels), doc_domain, doc_filename
 
             # Reset state for a new document.
             doc_parts = []
@@ -481,6 +496,8 @@ def stitch_documents(
             prev_pred_labels = pred_labels
             prev_gold_labels = gold_labels
             prev_overlap_start_raw = 0  # no overlap to skip
+            doc_domain = domain
+            doc_filename = filename
 
     # ====================================================================
     # CASE C — END OF STREAM (EOF)
@@ -505,7 +522,7 @@ def stitch_documents(
     if doc_parts:
         completed_doc = "".join(doc_parts)
         doc_count += 1
-        yield completed_doc, list(doc_gold_labels), list(doc_pred_labels)
+        yield completed_doc, list(doc_gold_labels), list(doc_pred_labels), doc_domain, doc_filename
 
     if logger:
         logger.info(f"  ✓ Stitching complete — {doc_count} documents reconstructed.")
@@ -516,7 +533,7 @@ def stitch_documents(
 # ============================================================================
 
 def write_documents_jsonl(
-    doc_stream: Generator[Tuple[str, List[str], List[str]], None, None],
+    doc_stream: Generator[Tuple[str, List[str], List[str], str, str], None, None],
     output_path: str,
     task_config: TaskConfig,
     logger: Optional[logging.Logger] = None,
@@ -528,7 +545,7 @@ def write_documents_jsonl(
     ``num_labels × num_labels`` confusion matrix per document.
 
     Each output line is a JSON object with keys:
-        doc_id, text, gold_labels, pred_labels
+        doc_id, domain, filename, text, gold_labels, pred_labels
 
     Returns
     -------
@@ -542,9 +559,11 @@ def write_documents_jsonl(
     total_labels = 0
 
     with open(output_path, "w", encoding="utf-8") as f:
-        for doc_text, gold_labels, pred_labels in doc_stream:
+        for doc_text, gold_labels, pred_labels, domain, filename in doc_stream:
             record = {
                 "doc_id": total,
+                "domain": domain,
+                "filename": filename,
                 "text": doc_text,
                 "gold_labels": gold_labels,
                 "pred_labels": pred_labels,

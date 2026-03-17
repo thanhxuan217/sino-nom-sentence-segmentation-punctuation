@@ -2,6 +2,10 @@
 
 This repository contains code to fine-tune SikuBERT, GuwenBERT, SikuRoberta, and other classical Chinese language models with QLoRA and CNN layers for token classification tasks (sentence segmentation and punctuation).
 
+## API Deployment & Usage
+
+For running the trained models as a REST API (including Setup, Docker instructions, and Model downloading), please refer to the dedicated **[API Documentation](api/README.md)**.
+
 ## 🚀 Quick Start
 
 ### 1. Run Setup Script (Recommended)

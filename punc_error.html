@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>So sánh lỗi Dấu Câu (Punctuation Visualizer)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f9f9f9;}
+        h2 { text-align: center; color: #333; }
+        .container { display: flex; flex-direction: column; gap: 15px; max-width: 1000px; margin: 0 auto;}
+        
+        .input-group { display: flex; flex-direction: column; }
+        label { font-weight: bold; margin-bottom: 5px; color: #555;}
+        textarea { 
+            width: 100%; height: 100px; padding: 10px; border: 1px solid #ccc; 
+            border-radius: 5px; font-size: 16px; resize: vertical; font-family: inherit;
+        }
+        
+        button {
+            padding: 12px 20px; font-size: 16px; font-weight: bold; color: white;
+            background-color: #007bff; border: none; border-radius: 5px; cursor: pointer;
+            transition: background-color 0.3s; align-self: center; margin-top: 10px;
+        }
+        button:hover { background-color: #0056b3; }
+
+        /* Khu vực hiển thị Metrics */
+        .metrics-container {
+            display: flex;
+            justify-content: space-around;
+            background-color: #e9ecef;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 1px solid #ced4da;
+        }
+        .metric-box { text-align: center; font-weight: bold; color: #495057; font-size: 16px; }
+        .metric-value { 
+            display: block; font-size: 28px; color: #007bff; margin-top: 5px; font-weight: 900;
+        }
+        .metric-detail {
+            display: block; font-size: 12px; color: #6c757d; font-weight: normal; margin-top: 2px;
+        }
+
+        .legend { display: flex; justify-content: center; gap: 20px; margin-top: 10px; flex-wrap: wrap;}
+        .legend span { padding: 5px 10px; border-radius: 4px; font-size: 14px; border: 1px solid #ccc;}
+
+        #result { 
+            margin-top: 10px; padding: 20px; border: 1px solid #ddd; 
+            border-radius: 8px; background-color: white; 
+            line-height: 2.2; font-size: 20px; word-wrap: break-word;
+        }
+        
+        .char { display: inline-block; color: #333; }
+        .punc { display: inline-block; font-weight: bold; margin: 0 2px; }
+        
+        .match { color: #28a745; }
+        .missing { background-color: #f8d7da; color: #dc3545; padding: 0 4px; border-radius: 3px; text-decoration: line-through; }
+        .extra { background-color: #fff3cd; color: #ffc107; padding: 0 4px; border-radius: 3px; }
+        .wrong { background-color: #cce5ff; color: #004085; padding: 0 4px; border-radius: 3px; }
+        .wrong-detail { font-size: 0.6em; color: #888; text-decoration: line-through; margin-left: 2px;}
+
+        .counter { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; color: #666; }
+        .counter input { width: 120px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; background-color: #f3f3f3; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Trực quan hóa & Đánh giá Lỗi Dấu câu</h2>
+
+    <div class="input-group">
+        <label>Ground Truth (Thực tế):</label>
+        <textarea id="gt">猪除從居不須問，挫瓜相連一處云。俎孤同韻君須記，悲眭三聲傀相親。亦有㭰癏乖中取，若用哹殍鳩內跟借入聲。法迦結裓歌：四聲全該干迦下借短言庚，於裓求傀。如是岡高根鉤歌內參字母關鑰歌訣揭十二攝法迦結岡庚裓高該傀根干鉤歌諸字骨髓分四聲法：平聲平道莫低昂，上聲高呼猛烈强，平去聲分明哀遠道，入聲短促急收藏。明顯四聲等韻圖。</textarea>
+        <div class="counter">
+            <span>Số ký tự (không tính dấu câu):</span>
+            <input id="gt-count" type="text" value="0" readonly>
+        </div>
+    </div>
+
+    <div class="input-group">
+        <label>Prediction (Dự đoán từ model):</label>
+        <textarea id="pred">猪除從居不須問挫瓜相連一處云：俎孤同韻君須記悲眭三聲傀相親亦有㭰癏乖中取若用哹殍鳩內跟借入聲。法迦結裓歌四聲全該干迦下借短言庚於裓求傀如是岡高根鉤歌內參字母關鑰歌訣揭十二攝法迦結岡庚裓高該傀根干鉤歌諸字骨髓分四聲法平聲平道莫低昂上聲高呼猛烈强平去聲分明哀遠道入聲短促急收藏明顯四聲等韻圖</textarea>
+        <div class="counter">
+            <span>Số ký tự (không tính dấu câu):</span>
+            <input id="pred-count" type="text" value="0" readonly>
+        </div>
+    </div>
+
+    <button onclick="visualize()">Bắt đầu So sánh & Đánh giá</button>
+
+    <div class="metrics-container">
+        <div class="metric-box">
+            Precision
+            <span class="metric-value" id="val-precision">0.00%</span>
+            <span class="metric-detail" id="detail-precision">(TP / TP + FP)</span>
+        </div>
+        <div class="metric-box">
+            Recall
+            <span class="metric-value" id="val-recall">0.00%</span>
+            <span class="metric-detail" id="detail-recall">(TP / TP + FN)</span>
+        </div>
+        <div class="metric-box">
+            F1-Score
+            <span class="metric-value" id="val-f1">0.00%</span>
+            <span class="metric-detail">Trung bình điều hòa</span>
+        </div>
+    </div>
+
+    <div class="legend">
+        <span class="match" style="border-color: #28a745;">Dự đoán Đúng</span>
+        <span class="missing">Bị Thiếu dấu (Missing)</span>
+        <span class="extra">Bị Thừa dấu (Extra)</span>
+        <span class="wrong">Sai loại dấu (Wrong)</span>
+    </div>
+
+    <div id="result"></div>
+</div>
+
+<script>
+    const punctuations = new Set([
+        '，', '。', '：', '；', '！', '？', '、', ',', '.', ':', ';', '!', '?', '—', '…', '「', '」', '『', '』', '（', '）', '《', '》', '〈', '〉', '"', "'"
+    ]);
+
+    const countIgnorePunc = new Set(["，","。","：","、","；","？","！", ",", ".", ":"]);
+
+    function countChars(text) {
+        let count = 0;
+        for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            if (c.trim() === '') continue;
+            if (countIgnorePunc.has(c)) continue;
+            count++;
+        }
+        return count;
+    }
+
+    function updateCounts() {
+        const gtText = document.getElementById('gt').value;
+        const predText = document.getElementById('pred').value;
+        document.getElementById('gt-count').value = countChars(gtText);
+        document.getElementById('pred-count').value = countChars(predText);
+    }
+
+    function parseText(text) {
+        let chars = [];
+        let puncs = [];
+        
+        for (let i = 0; i < text.length; i++) {
+            let c = text[i];
+            if (c.trim() === '') continue;
+
+            if (punctuations.has(c)) {
+                if (chars.length > 0) {
+                    puncs[chars.length - 1] += c;
+                } else {
+                    chars.push('');
+                    puncs.push(c);
+                }
+            } else {
+                chars.push(c);
+                puncs.push('');
+            }
+        }
+        return { chars, puncs };
+    }
+
+    function visualize() {
+        let gtText = document.getElementById('gt').value;
+        let predText = document.getElementById('pred').value;
+
+        let gt = parseText(gtText);
+        let pred = parseText(predText);
+
+        let html = '';
+        
+        // Khởi tạo các biến đếm cho Metrics (loại bỏ nhãn 'O')
+        let tp = 0; // True Positive: Đoán trúng dấu
+        let fp = 0; // False Positive: Đoán thừa dấu hoặc sai loại dấu
+        let fn = 0; // False Negative: Bỏ sót dấu hoặc sai loại dấu
+
+        let len = Math.max(gt.chars.length, pred.chars.length);
+
+        for (let i = 0; i < len; i++) {
+            let c = gt.chars[i] || pred.chars[i] || ''; 
+            let pGT = gt.puncs[i] || '';
+            let pPred = pred.puncs[i] || '';
+
+            html += `<span class="char">${c}</span>`;
+
+            // Xử lý Giao diện & Tính Metrics
+            if (pGT === pPred) {
+                if (pGT !== '') {
+                    html += `<span class="punc match">${pGT}</span>`;
+                    tp++; // Khớp nhãn dấu câu hoàn toàn (bỏ qua 'O')
+                }
+            } else {
+                if (pGT !== '' && pPred === '') {
+                    html += `<span class="punc missing" title="Bị thiếu">${pGT}</span>`;
+                    fn++; // GT có dấu nhưng Pred là 'O'
+                } else if (pGT === '' && pPred !== '') {
+                    html += `<span class="punc extra" title="Bị thừa">${pPred}</span>`;
+                    fp++; // GT là 'O' nhưng Pred lại sinh ra dấu
+                } else {
+                    html += `<span class="punc wrong" title="Đúng ra là: ${pGT}">${pPred}<span class="wrong-detail">${pGT}</span></span>`;
+                    fn++; // Sai loại dấu (Tính 1 lần bỏ sót dấu gốc của GT)
+                    fp++; // Sai loại dấu (Tính 1 lần ảo giác dự đoán sai của Pred)
+                }
+            }
+        }
+
+        // Cập nhật giao diện HTML
+        document.getElementById('result').innerHTML = html;
+        updateCounts();
+
+        // Tính toán các chỉ số
+        let precision = (tp + fp) === 0 ? 0 : (tp / (tp + fp));
+        let recall = (tp + fn) === 0 ? 0 : (tp / (tp + fn));
+        let f1 = (precision + recall) === 0 ? 0 : (2 * precision * recall) / (precision + recall);
+
+        // Hiển thị ra màn hình
+        document.getElementById('val-precision').innerText = (precision * 100).toFixed(2) + '%';
+        document.getElementById('val-recall').innerText = (recall * 100).toFixed(2) + '%';
+        document.getElementById('val-f1').innerText = (f1 * 100).toFixed(2) + '%';
+        
+        // Cập nhật tooltip chi tiết để bạn dễ debug
+        document.getElementById('detail-precision').innerText = `(${tp} / ${tp + fp})`;
+        document.getElementById('detail-recall').innerText = `(${tp} / ${tp + fn})`;
+    }
+
+    window.onload = function() {
+        document.getElementById('gt').addEventListener('input', updateCounts);
+        document.getElementById('pred').addEventListener('input', updateCounts);
+        updateCounts();
+        visualize();
+    };
+</script>
+
+</body>
+</html>
