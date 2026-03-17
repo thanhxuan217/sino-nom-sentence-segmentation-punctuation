@@ -49,7 +49,7 @@ HEAD_TYPE = os.getenv("HEAD_TYPE", "cnn")
 CNN_NUM_FILTERS = int(os.getenv("CNN_NUM_FILTERS", "256"))
 DROPOUT = float(os.getenv("DROPOUT", "0.1"))
 
-USE_QLORA = os.getenv("USE_QLORA", "0") == "1"
+USE_QLORA = os.getenv("USE_QLORA", "1") == "1"
 LORA_R = int(os.getenv("LORA_R", "16"))
 LORA_ALPHA = int(os.getenv("LORA_ALPHA", "32"))
 LORA_DROPOUT = float(os.getenv("LORA_DROPOUT", "0.1"))

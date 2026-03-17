@@ -141,7 +141,7 @@ class SikuBERTForTokenClassification(nn.Module):
                 model_name,
                 quantization_config=bnb_config,
                 device_map={'': int(os.environ.get('LOCAL_RANK', 0))} if int(os.environ.get("WORLD_SIZE", 1)) > 1 else "auto",
-                use_safetensors=True,
+                use_safetensors=False,
                 add_pooling_layer=False
             )
             
@@ -156,7 +156,7 @@ class SikuBERTForTokenClassification(nn.Module):
         else:
             self.bert = AutoModel.from_pretrained(
                 model_name,
-                use_safetensors=True,
+                use_safetensors=False,
                 add_pooling_layer=False
             )
 
