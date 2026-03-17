@@ -56,7 +56,8 @@ ENV MODEL_NAME="SIKU-BERT/sikubert" \
     PUNCT_MODEL_PATH="models/final_punctuation_model_cnn" \
     HEAD_TYPE="cnn" \
     CNN_NUM_FILTERS="256" \
-    DROPOUT="0.1"
+    DROPOUT="0.1" \
+    USE_QLORA="1"
 
 # Run the API server
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

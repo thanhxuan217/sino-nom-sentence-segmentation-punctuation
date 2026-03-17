@@ -49,6 +49,12 @@ HEAD_TYPE = os.getenv("HEAD_TYPE", "cnn")
 CNN_NUM_FILTERS = int(os.getenv("CNN_NUM_FILTERS", "256"))
 DROPOUT = float(os.getenv("DROPOUT", "0.1"))
 
+USE_QLORA = os.getenv("USE_QLORA", "0") == "1"
+LORA_R = int(os.getenv("LORA_R", "16"))
+LORA_ALPHA = int(os.getenv("LORA_ALPHA", "32"))
+LORA_DROPOUT = float(os.getenv("LORA_DROPOUT", "0.1"))
+LORA_TARGET_MODULES = os.getenv("LORA_TARGET_MODULES", "query,key,value").split(",")
+
 PUNCT_STRIP_CHARS = "，。：、；？！"
 PUNCT_STRIP_TABLE = str.maketrans("", "", PUNCT_STRIP_CHARS)
 
@@ -67,6 +73,11 @@ seg_manager = ModelManager(
     head_type=HEAD_TYPE,
     cnn_num_filters=CNN_NUM_FILTERS,
     dropout=DROPOUT,
+    use_qlora=USE_QLORA,
+    lora_r=LORA_R,
+    lora_alpha=LORA_ALPHA,
+    lora_dropout=LORA_DROPOUT,
+    lora_target_modules=LORA_TARGET_MODULES,
 )
 
 punct_manager = ModelManager(
@@ -79,6 +90,11 @@ punct_manager = ModelManager(
     head_type=HEAD_TYPE,
     cnn_num_filters=CNN_NUM_FILTERS,
     dropout=DROPOUT,
+    use_qlora=USE_QLORA,
+    lora_r=LORA_R,
+    lora_alpha=LORA_ALPHA,
+    lora_dropout=LORA_DROPOUT,
+    lora_target_modules=LORA_TARGET_MODULES,
 )
 
 

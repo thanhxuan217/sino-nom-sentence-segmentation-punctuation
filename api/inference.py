@@ -8,6 +8,7 @@ sliding window (overlap) and batched inference to avoid truncation.
 """
 
 import logging
+import os
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -100,6 +101,11 @@ class ModelManager:
         cnn_kernel_sizes: Optional[List[int]] = None,
         cnn_num_filters: int = 256,
         dropout: float = 0.1,
+        use_qlora: bool = False,
+        lora_r: int = 16,
+        lora_alpha: int = 32,
+        lora_dropout: float = 0.1,
+        lora_target_modules: Optional[List[str]] = None,
     ):
         self.task_name = task_name
         self.model_path = model_path
@@ -111,6 +117,11 @@ class ModelManager:
         self.cnn_kernel_sizes = cnn_kernel_sizes or [3, 5, 7]
         self.cnn_num_filters = cnn_num_filters
         self.dropout = dropout
+        self.use_qlora = use_qlora
+        self.lora_r = lora_r
+        self.lora_alpha = lora_alpha
+        self.lora_dropout = lora_dropout
+        self.lora_target_modules = lora_target_modules or ["query", "key", "value"]
 
         self.task_config = TASK_CONFIGS[task_name]
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -130,6 +141,19 @@ class ModelManager:
         # --- Tokenizer ---
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
 
+        # --- QLoRA Config ---
+        qlora_config = None
+        if self.use_qlora:
+            from peft import LoraConfig, TaskType
+            qlora_config = LoraConfig(
+                r=self.lora_r,
+                lora_alpha=self.lora_alpha,
+                target_modules=self.lora_target_modules,
+                lora_dropout=self.lora_dropout,
+                bias="none",
+                task_type=TaskType.FEATURE_EXTRACTION
+            )
+
         # --- Model ---
         self.model = SikuBERTForTokenClassification(
             model_name=self.model_name,
@@ -138,7 +162,8 @@ class ModelManager:
             head_type=self.head_type,
             cnn_kernel_sizes=self.cnn_kernel_sizes,
             cnn_num_filters=self.cnn_num_filters,
-            use_qlora=False,  # inference always uses merged / full weights
+            use_qlora=self.use_qlora,
+            qlora_config=qlora_config,
         )
 
         # Resize embeddings if the tokenizer has extra tokens

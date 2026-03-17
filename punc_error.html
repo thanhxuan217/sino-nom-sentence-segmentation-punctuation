@@ -19,15 +19,33 @@
         button {
             padding: 12px 20px; font-size: 16px; font-weight: bold; color: white;
             background-color: #007bff; border: none; border-radius: 5px; cursor: pointer;
-            transition: background-color 0.3s; align-self: center;
+            transition: background-color 0.3s; align-self: center; margin-top: 10px;
         }
         button:hover { background-color: #0056b3; }
 
-        .legend { display: flex; justify-content: center; gap: 20px; margin-top: 20px; flex-wrap: wrap;}
+        /* Khu vực hiển thị Metrics */
+        .metrics-container {
+            display: flex;
+            justify-content: space-around;
+            background-color: #e9ecef;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 1px solid #ced4da;
+        }
+        .metric-box { text-align: center; font-weight: bold; color: #495057; font-size: 16px; }
+        .metric-value { 
+            display: block; font-size: 28px; color: #007bff; margin-top: 5px; font-weight: 900;
+        }
+        .metric-detail {
+            display: block; font-size: 12px; color: #6c757d; font-weight: normal; margin-top: 2px;
+        }
+
+        .legend { display: flex; justify-content: center; gap: 20px; margin-top: 10px; flex-wrap: wrap;}
         .legend span { padding: 5px 10px; border-radius: 4px; font-size: 14px; border: 1px solid #ccc;}
 
         #result { 
-            margin-top: 20px; padding: 20px; border: 1px solid #ddd; 
+            margin-top: 10px; padding: 20px; border: 1px solid #ddd; 
             border-radius: 8px; background-color: white; 
             line-height: 2.2; font-size: 20px; word-wrap: break-word;
         }
@@ -35,23 +53,20 @@
         .char { display: inline-block; color: #333; }
         .punc { display: inline-block; font-weight: bold; margin: 0 2px; }
         
-        /* Màu sắc cho từng loại lỗi */
-        .match { color: #28a745; } /* Xanh lá: Đúng */
-        .missing { background-color: #f8d7da; color: #dc3545; padding: 0 4px; border-radius: 3px; text-decoration: line-through; } /* Đỏ: Thiếu */
-        .extra { background-color: #fff3cd; color: #ffc107; padding: 0 4px; border-radius: 3px; } /* Vàng: Thừa */
-        .wrong { background-color: #cce5ff; color: #004085; padding: 0 4px; border-radius: 3px; } /* Xanh dương: Sai dấu */
-        
+        .match { color: #28a745; }
+        .missing { background-color: #f8d7da; color: #dc3545; padding: 0 4px; border-radius: 3px; text-decoration: line-through; }
+        .extra { background-color: #fff3cd; color: #ffc107; padding: 0 4px; border-radius: 3px; }
+        .wrong { background-color: #cce5ff; color: #004085; padding: 0 4px; border-radius: 3px; }
         .wrong-detail { font-size: 0.6em; color: #888; text-decoration: line-through; margin-left: 2px;}
 
         .counter { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; color: #666; }
         .counter input { width: 120px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; background-color: #f3f3f3; font-size: 14px; }
-
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Trực quan hóa Lỗi Dấu câu (Punctuation Errors)</h2>
+    <h2>Trực quan hóa & Đánh giá Lỗi Dấu câu</h2>
 
     <div class="input-group">
         <label>Ground Truth (Thực tế):</label>
@@ -71,7 +86,25 @@
         </div>
     </div>
 
-    <button onclick="visualize()">Bắt đầu So sánh (Visualize)</button>
+    <button onclick="visualize()">Bắt đầu So sánh & Đánh giá</button>
+
+    <div class="metrics-container">
+        <div class="metric-box">
+            Precision
+            <span class="metric-value" id="val-precision">0.00%</span>
+            <span class="metric-detail" id="detail-precision">(TP / TP + FP)</span>
+        </div>
+        <div class="metric-box">
+            Recall
+            <span class="metric-value" id="val-recall">0.00%</span>
+            <span class="metric-detail" id="detail-recall">(TP / TP + FN)</span>
+        </div>
+        <div class="metric-box">
+            F1-Score
+            <span class="metric-value" id="val-f1">0.00%</span>
+            <span class="metric-detail">Trung bình điều hòa</span>
+        </div>
+    </div>
 
     <div class="legend">
         <span class="match" style="border-color: #28a745;">Dự đoán Đúng</span>
@@ -80,18 +113,15 @@
         <span class="wrong">Sai loại dấu (Wrong)</span>
     </div>
 
-    <div id="result">
-        </div>
+    <div id="result"></div>
 </div>
 
 <script>
-    // Danh sách các dấu câu phổ biến (có thể thêm bớt tùy ý)
     const punctuations = new Set([
         '，', '。', '：', '；', '！', '？', '、', ',', '.', ':', ';', '!', '?', '—', '…', '「', '」', '『', '』', '（', '）', '《', '》', '〈', '〉', '"', "'"
     ]);
 
-    // Danh s?ch d?u c?u kh?ng t?nh v?o ? ??m (theo labels)
-    const countIgnorePunc = new Set(["，","。","：","、","；","？","！"]);
+    const countIgnorePunc = new Set(["，","。","：","、","；","？","！", ",", ".", ":"]);
 
     function countChars(text) {
         let count = 0;
@@ -111,26 +141,24 @@
         document.getElementById('pred-count').value = countChars(predText);
     }
 
-
-    // Hàm bóc tách chữ Hán và Dấu câu đi kèm phía sau
     function parseText(text) {
         let chars = [];
         let puncs = [];
         
         for (let i = 0; i < text.length; i++) {
             let c = text[i];
-            if (c.trim() === '') continue; // Bỏ qua khoảng trắng
+            if (c.trim() === '') continue;
 
             if (punctuations.has(c)) {
                 if (chars.length > 0) {
-                    puncs[chars.length - 1] += c; // Nối dấu câu vào chữ liền trước
+                    puncs[chars.length - 1] += c;
                 } else {
                     chars.push('');
                     puncs.push(c);
                 }
             } else {
-                chars.push(c); // Chữ Hán
-                puncs.push(''); // Dấu câu rỗng khởi tạo
+                chars.push(c);
+                puncs.push('');
             }
         }
         return { chars, puncs };
@@ -145,7 +173,11 @@
 
         let html = '';
         
-        // Cần đảm bảo so sánh cùng độ dài chữ Hán
+        // Khởi tạo các biến đếm cho Metrics (loại bỏ nhãn 'O')
+        let tp = 0; // True Positive: Đoán trúng dấu
+        let fp = 0; // False Positive: Đoán thừa dấu hoặc sai loại dấu
+        let fn = 0; // False Negative: Bỏ sót dấu hoặc sai loại dấu
+
         let len = Math.max(gt.chars.length, pred.chars.length);
 
         for (let i = 0; i < len; i++) {
@@ -155,31 +187,46 @@
 
             html += `<span class="char">${c}</span>`;
 
+            // Xử lý Giao diện & Tính Metrics
             if (pGT === pPred) {
-                // Đúng hoàn toàn
                 if (pGT !== '') {
                     html += `<span class="punc match">${pGT}</span>`;
+                    tp++; // Khớp nhãn dấu câu hoàn toàn (bỏ qua 'O')
                 }
             } else {
-                // Có sự khác biệt
                 if (pGT !== '' && pPred === '') {
-                    // Mất dấu (Model không predict ra)
                     html += `<span class="punc missing" title="Bị thiếu">${pGT}</span>`;
+                    fn++; // GT có dấu nhưng Pred là 'O'
                 } else if (pGT === '' && pPred !== '') {
-                    // Thừa dấu (Model bị ảo giác đẻ thêm dấu)
                     html += `<span class="punc extra" title="Bị thừa">${pPred}</span>`;
+                    fp++; // GT là 'O' nhưng Pred lại sinh ra dấu
                 } else {
-                    // Sai loại dấu (VD: Nhầm dấu phẩy thành dấu chấm)
                     html += `<span class="punc wrong" title="Đúng ra là: ${pGT}">${pPred}<span class="wrong-detail">${pGT}</span></span>`;
+                    fn++; // Sai loại dấu (Tính 1 lần bỏ sót dấu gốc của GT)
+                    fp++; // Sai loại dấu (Tính 1 lần ảo giác dự đoán sai của Pred)
                 }
             }
         }
 
+        // Cập nhật giao diện HTML
         document.getElementById('result').innerHTML = html;
         updateCounts();
+
+        // Tính toán các chỉ số
+        let precision = (tp + fp) === 0 ? 0 : (tp / (tp + fp));
+        let recall = (tp + fn) === 0 ? 0 : (tp / (tp + fn));
+        let f1 = (precision + recall) === 0 ? 0 : (2 * precision * recall) / (precision + recall);
+
+        // Hiển thị ra màn hình
+        document.getElementById('val-precision').innerText = (precision * 100).toFixed(2) + '%';
+        document.getElementById('val-recall').innerText = (recall * 100).toFixed(2) + '%';
+        document.getElementById('val-f1').innerText = (f1 * 100).toFixed(2) + '%';
+        
+        // Cập nhật tooltip chi tiết để bạn dễ debug
+        document.getElementById('detail-precision').innerText = `(${tp} / ${tp + fp})`;
+        document.getElementById('detail-recall').innerText = `(${tp} / ${tp + fn})`;
     }
 
-    // Tự động chạy một lần khi load trang
     window.onload = function() {
         document.getElementById('gt').addEventListener('input', updateCounts);
         document.getElementById('pred').addEventListener('input', updateCounts);
