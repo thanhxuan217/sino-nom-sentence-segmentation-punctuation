@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sino-Nom Sentence Segmentation & Punctuation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f1117;
+            --bg-secondary: #1a1d2e;
+            --bg-card: #232740;
+            --bg-input: #1a1d2e;
+            --text-primary: #e8eaed;
+            --text-secondary: #9aa0b0;
+            --text-muted: #6b7280;
+            --accent-blue: #4f8ff7;
+            --accent-blue-hover: #3a7ae8;
+            --accent-purple: #a78bfa;
+            --accent-green: #34d399;
+            --accent-red: #f87171;
+            --accent-yellow: #fbbf24;
+            --accent-orange: #fb923c;
+            --border: #2d3148;
+            --border-focus: #4f8ff7;
+            --radius: 12px;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            background-image:
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(79, 143, 247, 0.12), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 100%, rgba(167, 139, 250, 0.08), transparent);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 30px 20px;
+        }
+
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* ==================== Header ==================== */
+        .header {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .header h1 {
+            font-size: 28px;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+        }
+        .header p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-top: 6px;
+        }
+
+        /* ==================== Health Status ==================== */
+        .health-bar {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            padding: 10px 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 13px;
+        }
+        .health-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .health-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: background 0.3s;
+        }
+        .health-dot.ok { background: var(--accent-green); box-shadow: 0 0 8px rgba(52, 211, 153, 0.5); }
+        .health-dot.err { background: var(--accent-red); box-shadow: 0 0 8px rgba(248, 113, 113, 0.5); }
+
+        /* ==================== Tabs ==================== */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 4px;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 12px 16px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+        .tab-btn.active {
+            background: var(--accent-blue);
+            color: white;
+            box-shadow: 0 2px 12px rgba(79, 143, 247, 0.35);
+        }
+        .tab-btn:not(.active):hover {
+            background: rgba(79, 143, 247, 0.1);
+            color: var(--text-primary);
+        }
+
+        /* ==================== Card ==================== */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            box-shadow: var(--shadow);
+        }
+
+        /* ==================== Input Mode Toggle ==================== */
+        .input-mode-toggle {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 3px;
+            margin-bottom: 16px;
+            width: fit-content;
+        }
+        .mode-btn {
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-btn.active {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+
+        /* ==================== Input Fields ==================== */
+        .input-section { display: flex; flex-direction: column; gap: 8px; }
+        .input-section label {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        textarea {
+            width: 100%;
+            min-height: 110px;
+            padding: 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 17px;
+            font-family: inherit;
+            resize: vertical;
+            line-height: 1.7;
+            transition: border-color 0.2s;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px rgba(79, 143, 247, 0.15);
+        }
+        textarea::placeholder { color: var(--text-muted); }
+
+        /* ==================== File Upload ==================== */
+        .file-drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s;
+            background: var(--bg-input);
+        }
+        .file-drop-zone:hover, .file-drop-zone.dragover {
+            border-color: var(--accent-blue);
+            background: rgba(79, 143, 247, 0.05);
+        }
+        .file-drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
+        .file-drop-zone p { color: var(--text-secondary); font-size: 14px; }
+        .file-drop-zone .formats { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+        .file-drop-zone input[type=file] { display: none; }
+        .file-name-display {
+            margin-top: 8px;
+            font-size: 13px;
+            color: var(--accent-green);
+            font-weight: 500;
+        }
+
+        /* ==================== Submit Button ==================== */
+        .submit-btn {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 700;
+            color: white;
+            background: linear-gradient(135deg, var(--accent-blue), #6366f1);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        .submit-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(79, 143, 247, 0.4);
+        }
+        .submit-btn:active { transform: translateY(0); }
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .submit-btn .spinner {
+            display: none;
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        .submit-btn.loading .spinner { display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ==================== Config ==================== */
+        .config-bar {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 8px;
+        }
+        .config-bar label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .config-bar input[type=text] {
+            padding: 6px 10px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            width: 260px;
+        }
+        .config-bar input[type=text]:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+
+        /* ==================== Results ==================== */
+        .result-section {
+            display: none;
+        }
+        .result-section.visible { display: block; }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+        .result-header h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .copy-btn {
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .legend-swatch {
+            width: 14px; height: 14px;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* Result visualization */
+        .result-display {
+            padding: 20px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            line-height: 2.4;
+            font-size: 20px;
+            word-wrap: break-word;
+            min-height: 60px;
+        }
+
+        /* Character & label styling for segmentation */
+        .char { display: inline; color: var(--text-primary); }
+        .seg-separator {
+            display: inline;
+            color: var(--accent-blue);
+            font-weight: 700;
+            margin: 0 2px;
+            opacity: 0.8;
+        }
+        /* Punctuation coloring */
+        .punc-inserted {
+            display: inline;
+            font-weight: 700;
+            color: var(--accent-green);
+            margin: 0 1px;
+        }
+
+
+        /* Stats bar */
+        .stats-bar {
+            display: flex;
+            justify-content: space-around;
+            padding: 14px 20px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 14px;
+        }
+        .stat-item { text-align: center; }
+        .stat-label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+        .stat-value {
+            display: block;
+            font-size: 24px;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-top: 2px;
+        }
+
+        /* Error toast */
+        .error-toast {
+            display: none;
+            padding: 14px 20px;
+            background: rgba(248, 113, 113, 0.15);
+            border: 1px solid rgba(248, 113, 113, 0.3);
+            border-radius: 8px;
+            color: var(--accent-red);
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .error-toast.visible { display: block; }
+
+        /* ==================== Responsive ==================== */
+        @media (max-width: 640px) {
+            body { padding: 16px 10px; }
+            .header h1 { font-size: 22px; }
+            .result-display { font-size: 17px; }
+            .health-bar { flex-direction: column; gap: 8px; align-items: center; }
+            .stats-bar { flex-wrap: wrap; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <!-- ============ HEADER ============ -->
+    <div class="header">
+        <h1>漢喃 Sino-Nom NLP</h1>
+        <p>Sentence Segmentation & Punctuation — Powered by SikuBERT + CNN</p>
+    </div>
+
+    <!-- ============ HEALTH BAR ============ -->
+    <div class="health-bar" id="health-bar">
+        <div class="health-item">
+            <span class="health-dot" id="dot-seg"></span>
+            <span>Segmentation Model</span>
+        </div>
+        <div class="health-item">
+            <span class="health-dot" id="dot-punct"></span>
+            <span>Punctuation Model</span>
+        </div>
+        <div class="health-item" style="color: var(--text-muted); font-size: 12px;">
+            API: <span id="api-url-display">—</span>
+        </div>
+    </div>
+
+    <!-- ============ CONFIG ============ -->
+    <div class="config-bar">
+        <label>🔗 API Base URL:</label>
+        <input type="text" id="api-url" value="http://localhost:8000" placeholder="http://localhost:8000">
+        <button class="copy-btn" onclick="checkHealth()" style="font-size: 13px;">Kiểm tra kết nối</button>
+    </div>
+
+    <!-- ============ TAB SWITCH ============ -->
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('segment')" id="tab-segment">
+            ✂️ Tách từ (Segmentation)
+        </button>
+        <button class="tab-btn" onclick="switchTab('punctuate')" id="tab-punctuate">
+            📝 Chấm câu (Punctuation)
+        </button>
+    </div>
+
+    <!-- ============ INPUT CARD ============ -->
+    <div class="card">
+        <!-- Input Mode Toggle -->
+        <div class="input-mode-toggle">
+            <button class="mode-btn active" onclick="switchInputMode('text')" id="mode-text">Nhập văn bản</button>
+            <button class="mode-btn" onclick="switchInputMode('file')" id="mode-file">Tải file</button>
+        </div>
+
+        <!-- Text Input -->
+        <div class="input-section" id="text-input-section">
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2px;">
+              <label id="input-label">Nhập văn bản Hán Nôm cần tách từ:</label>
+              <button class="copy-btn" onclick="cleanInputText()" style="padding: 4px 10px; font-size: 11px; border-color: var(--accent-purple); color: var(--accent-purple);">🧹 Dọn dẹp văn bản</button>
+            </div>
+            <textarea id="input-text" placeholder="Nhập hoặc dán văn bản Hán Nôm vào đây…"></textarea>
+        </div>
+
+        <!-- File Input -->
+        <div class="input-section" id="file-input-section" style="display: none;">
+            <label>Tải lên file (.txt, .docx):</label>
+            <div class="file-drop-zone" id="file-drop-zone">
+                <div class="icon">📄</div>
+                <p>Kéo thả file vào đây hoặc <strong>nhấp để chọn</strong></p>
+                <div class="formats">Hỗ trợ: .txt, .docx</div>
+                <input type="file" id="file-input" accept=".txt,.docx">
+                <div class="file-name-display" id="file-name-display"></div>
+            </div>
+        </div>
+
+        <button class="submit-btn" id="submit-btn" onclick="submitRequest()">
+            <span class="spinner"></span>
+            <span class="btn-text" id="btn-text">🚀 Bắt đầu Tách từ</span>
+        </button>
+    </div>
+
+    <!-- ============ ERROR ============ -->
+    <div class="error-toast" id="error-toast"></div>
+
+    <!-- ============ RESULTS ============ -->
+    <div class="result-section" id="result-section">
+        <div class="card">
+            <div class="result-header">
+                <h3 id="result-title">Kết quả</h3>
+                <button class="copy-btn" onclick="copyResult()">📋 Sao chép</button>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-bar" id="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-label">Ký tự đầu vào</span>
+                    <span class="stat-value" id="stat-input-chars">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label" id="stat-output-label">Số phân đoạn</span>
+                    <span class="stat-value" id="stat-output-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Thời gian</span>
+                    <span class="stat-value" id="stat-time">0ms</span>
+                </div>
+            </div>
+
+
+
+            <!-- Result Display -->
+            <div class="result-display" id="result-display">
+                <span style="color: var(--text-muted);">Kết quả sẽ hiển thị ở đây…</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // ==================== STATE ====================
+    let currentTab = 'segment';
+    let currentInputMode = 'text';
+    let lastResult = '';
+    let lastLabels = [];
+
+    const PUNCT_CHARS = new Set(['，', '。', '：', '、', '；', '？', '！']);
+    const ALLOWED_PUNCT = "，。：、；？！";
+
+    // ==================== CLEAN TEXT ====================
+    function cleanInputText() {
+        const inputArea = document.getElementById('input-text');
+        let text = inputArea.value;
+        if (!text) return;
+
+        // 1. Xóa toàn bộ khoảng trắng và xuống dòng
+        text = text.replace(/\s/g, '');
+
+        // 2. Xóa toàn bộ dấu câu ngoại trừ bộ model dự đoán
+        // Sử dụng regex \p{P} để bắt mọi loại dấu câu Unicode
+        text = text.replace(/\p{P}/gu, (match) => {
+            return ALLOWED_PUNCT.includes(match) ? match : '';
+        });
+
+        inputArea.value = text;
+        
+        // Hiện thông báo nhẹ
+        const btn = document.querySelector('button[onclick="cleanInputText()"]');
+        const orig = btn.textContent;
+        btn.textContent = '✨ Đã dọn dẹp!';
+        setTimeout(() => btn.textContent = orig, 1000);
+    }
+
+    // ==================== TAB SWITCH ====================
+    function switchTab(tab) {
+        currentTab = tab;
+        document.getElementById('tab-segment').classList.toggle('active', tab === 'segment');
+        document.getElementById('tab-punctuate').classList.toggle('active', tab === 'punctuate');
+
+        if (tab === 'segment') {
+            document.getElementById('input-label').textContent = 'Nhập văn bản Hán Nôm cần tách từ:';
+            document.getElementById('btn-text').textContent = '🚀 Bắt đầu Tách từ';
+        } else {
+            document.getElementById('input-label').textContent = 'Nhập văn bản Hán Nôm cần chấm câu:';
+            document.getElementById('btn-text').textContent = '🚀 Bắt đầu Chấm câu';
+        }
+        document.getElementById('stat-output-label').textContent = tab === 'segment' ? 'Số phân đoạn' : 'Số dấu câu';
+    }
+
+    // ==================== INPUT MODE ====================
+    function switchInputMode(mode) {
+        currentInputMode = mode;
+        document.getElementById('mode-text').classList.toggle('active', mode === 'text');
+        document.getElementById('mode-file').classList.toggle('active', mode === 'file');
+        document.getElementById('text-input-section').style.display = mode === 'text' ? 'block' : 'none';
+        document.getElementById('file-input-section').style.display = mode === 'file' ? 'block' : 'none';
+    }
+
+    // ==================== FILE HANDLING ====================
+    const dropZone = document.getElementById('file-drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            fileInput.files = e.dataTransfer.files;
+            showFileName(e.dataTransfer.files[0].name);
+        }
+    });
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) showFileName(fileInput.files[0].name);
+    });
+
+    function showFileName(name) {
+        document.getElementById('file-name-display').textContent = '✅ ' + name;
+    }
+
+    // ==================== API REQUESTS ====================
+    function getApiUrl() {
+        return document.getElementById('api-url').value.replace(/\/+$/, '');
+    }
+
+    async function checkHealth() {
+        const url = getApiUrl();
+        document.getElementById('api-url-display').textContent = url;
+        try {
+            const resp = await fetch(url + '/health');
+            const data = await resp.json();
+            document.getElementById('dot-seg').className = 'health-dot ' + (data.segmentation_model_loaded ? 'ok' : 'err');
+            document.getElementById('dot-punct').className = 'health-dot ' + (data.punctuation_model_loaded ? 'ok' : 'err');
+        } catch (e) {
+            document.getElementById('dot-seg').className = 'health-dot err';
+            document.getElementById('dot-punct').className = 'health-dot err';
+        }
+    }
+
+    async function submitRequest() {
+        const btn = document.getElementById('submit-btn');
+        const errorToast = document.getElementById('error-toast');
+        errorToast.classList.remove('visible');
+
+        btn.classList.add('loading');
+        btn.disabled = true;
+
+        const url = getApiUrl() + '/' + currentTab;
+        const formData = new FormData();
+
+        let inputLength = 0;
+        if (currentInputMode === 'text') {
+            const text = document.getElementById('input-text').value.trim();
+            if (!text) {
+                showError('Vui lòng nhập văn bản.');
+                btn.classList.remove('loading'); btn.disabled = false;
+                return;
+            }
+            formData.append('text', text);
+            inputLength = text.length;
+        } else {
+            const file = document.getElementById('file-input').files[0];
+            if (!file) {
+                showError('Vui lòng chọn file.');
+                btn.classList.remove('loading'); btn.disabled = false;
+                return;
+            }
+            formData.append('file', file);
+            inputLength = file.name;
+        }
+
+        const startTime = performance.now();
+
+        try {
+            const resp = await fetch(url, { method: 'POST', body: formData });
+            const elapsed = Math.round(performance.now() - startTime);
+
+            if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                throw new Error(errData.message || `HTTP ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            lastResult = data.result;
+            lastLabels = data.labels || [];
+
+            // Display results
+            renderResult(data, elapsed, inputLength);
+
+        } catch (e) {
+            showError('Lỗi: ' + e.message);
+        } finally {
+            btn.classList.remove('loading');
+            btn.disabled = false;
+        }
+    }
+
+    // ==================== RENDER ====================
+    function renderResult(data, elapsedMs, inputLength) {
+        const section = document.getElementById('result-section');
+        section.classList.add('visible');
+
+        // Title
+        const title = currentTab === 'segment' ? 'Kết quả Tách từ' : 'Kết quả Chấm câu';
+        const subtitle = data.input_type === 'file' ? ` — ${data.filename}` : '';
+        document.getElementById('result-title').textContent = title + subtitle;
+
+        // Stats
+        document.getElementById('stat-time').textContent = elapsedMs + 'ms';
+
+        const display = document.getElementById('result-display');
+
+        if (currentTab === 'segment') {
+            renderSegmentation(data, display, inputLength);
+        } else {
+            renderPunctuation(data, display, inputLength);
+        }
+    }
+
+    function renderSegmentation(data, display, inputLength) {
+        const result = data.result;
+
+        // Count segments (split by ' | ')
+        const segments = result.split(' | ');
+        document.getElementById('stat-input-chars').textContent = typeof inputLength === 'number' ? inputLength : '—';
+        document.getElementById('stat-output-count').textContent = segments.length;
+
+        let html = '';
+        for (let i = 0; i < result.length; i++) {
+            const c = result[i];
+            if (result.substring(i, i + 3) === ' | ') {
+                html += '<span class="seg-separator"> | </span>';
+                i += 2;
+            } else {
+                html += `<span class="char">${escapeHtml(c)}</span>`;
+            }
+        }
+        display.innerHTML = html;
+    }
+
+    function renderPunctuation(data, display, inputLength) {
+        const result = data.result;
+
+        // Count punctuation marks inserted
+        let punctCount = 0;
+        for (const c of result) {
+            if (PUNCT_CHARS.has(c)) punctCount++;
+        }
+        document.getElementById('stat-input-chars').textContent = typeof inputLength === 'number' ? inputLength : '—';
+        document.getElementById('stat-output-count').textContent = punctCount;
+
+        let html = '';
+        for (const c of result) {
+            if (PUNCT_CHARS.has(c)) {
+                html += `<span class="punc-inserted">${c}</span>`;
+            } else {
+                html += `<span class="char">${escapeHtml(c)}</span>`;
+            }
+        }
+        display.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    // ==================== UTILITIES ====================
+    function showError(msg) {
+        const toast = document.getElementById('error-toast');
+        toast.textContent = msg;
+        toast.classList.add('visible');
+    }
+
+    function copyResult() {
+        if (lastResult) {
+            navigator.clipboard.writeText(lastResult).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                const orig = btn.textContent;
+                btn.textContent = '✅ Đã sao chép!';
+                setTimeout(() => btn.textContent = orig, 1500);
+            });
+        }
+    }
+
+    // ==================== INIT ====================
+    window.addEventListener('load', () => {
+        checkHealth();
+    });
+</script>
+
+</body>
+</html>

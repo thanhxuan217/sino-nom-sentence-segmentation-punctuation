@@ -12,9 +12,11 @@ import logging
 import os
 import traceback
 import io
+import unicodedata
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Form, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from typing import Union, Optional
@@ -54,9 +56,6 @@ LORA_R = int(os.getenv("LORA_R", "16"))
 LORA_ALPHA = int(os.getenv("LORA_ALPHA", "32"))
 LORA_DROPOUT = float(os.getenv("LORA_DROPOUT", "0.1"))
 LORA_TARGET_MODULES = os.getenv("LORA_TARGET_MODULES", "query,key,value").split(",")
-
-PUNCT_STRIP_CHARS = "，。：、；？！"
-PUNCT_STRIP_TABLE = str.maketrans("", "", PUNCT_STRIP_CHARS)
 
 
 # ============================================================================
@@ -142,6 +141,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ============================================================================
 # ERROR HANDLERS
@@ -185,8 +192,12 @@ def parse_file_content(file: UploadFile) -> str:
         raise ValueError("Unsupported file extension. Please upload .txt, .docx.")
 
 def preprocess_input_text(text: str) -> str:
-    """Remove punctuation marks before inference."""
-    return text.translate(PUNCT_STRIP_TABLE).strip()
+    """Remove all punctuation marks and whitespace (including newlines) before inference.
+    
+    Strips every Unicode punctuation character (category 'P*') and all whitespace,
+    keeping only CJK ideographs, letters, and digits.
+    """
+    return "".join(ch for ch in text if not unicodedata.category(ch).startswith("P") and not ch.isspace()).strip()
 
 # ============================================================================
 # ENDPOINTS
