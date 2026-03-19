@@ -3,7 +3,7 @@
 Pydantic schemas for the Sino-Nom Sentence Segmentation & Punctuation API.
 """
 
-from typing import List, Optional
+from typing import List
 
 from pydantic import BaseModel, Field
 
@@ -12,11 +12,9 @@ from pydantic import BaseModel, Field
 # RESPONSE SCHEMAS
 # ============================================================================
 
-class TextPredictionResponse(BaseModel):
-    """Successful prediction response for text input."""
+class PredictionResponse(BaseModel):
+    """Successful prediction response."""
 
-    status: str = Field(default="success", description="Status of the request", examples=["success"])
-    input_type: str = Field(default="text", description="Type of input", examples=["text"])
     result: str = Field(
         ...,
         description="Text with predicted segmentation separators or punctuation inserted.",
@@ -24,21 +22,6 @@ class TextPredictionResponse(BaseModel):
     labels: List[str] = Field(
         ...,
         description="Per-character predicted labels.",
-    )
-
-
-class FilePredictionResponse(BaseModel):
-    """Successful prediction response for file input."""
-
-    status: str = Field(default="success", description="Status of the request", examples=["success"])
-    input_type: str = Field(default="file", description="Type of input", examples=["file"])
-    filename: str = Field(
-        ...,
-        description="Name of the uploaded file.",
-    )
-    result: str = Field(
-        ...,
-        description="Text with predicted segmentation separators or punctuation inserted.",
     )
 
 
