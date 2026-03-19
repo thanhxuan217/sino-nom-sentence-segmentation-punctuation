@@ -133,33 +133,6 @@
             box-shadow: var(--shadow);
         }
 
-        /* ==================== Input Mode Toggle ==================== */
-        .input-mode-toggle {
-            display: flex;
-            gap: 4px;
-            background: var(--bg-primary);
-            border-radius: 8px;
-            padding: 3px;
-            margin-bottom: 16px;
-            width: fit-content;
-        }
-        .mode-btn {
-            padding: 6px 16px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-secondary);
-            background: transparent;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .mode-btn.active {
-            background: var(--bg-card);
-            color: var(--text-primary);
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-        }
-
         /* ==================== Input Fields ==================== */
         .input-section { display: flex; flex-direction: column; gap: 8px; }
         .input-section label {
@@ -187,31 +160,6 @@
             box-shadow: 0 0 0 3px rgba(79, 143, 247, 0.15);
         }
         textarea::placeholder { color: var(--text-muted); }
-
-        /* ==================== File Upload ==================== */
-        .file-drop-zone {
-            border: 2px dashed var(--border);
-            border-radius: 8px;
-            padding: 40px 20px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.25s;
-            background: var(--bg-input);
-        }
-        .file-drop-zone:hover, .file-drop-zone.dragover {
-            border-color: var(--accent-blue);
-            background: rgba(79, 143, 247, 0.05);
-        }
-        .file-drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
-        .file-drop-zone p { color: var(--text-secondary); font-size: 14px; }
-        .file-drop-zone .formats { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
-        .file-drop-zone input[type=file] { display: none; }
-        .file-name-display {
-            margin-top: 8px;
-            font-size: 13px;
-            color: var(--accent-green);
-            font-weight: 500;
-        }
 
         /* ==================== Submit Button ==================== */
         .submit-btn {
@@ -453,31 +401,13 @@
 
     <!-- ============ INPUT CARD ============ -->
     <div class="card">
-        <!-- Input Mode Toggle -->
-        <div class="input-mode-toggle">
-            <button class="mode-btn active" onclick="switchInputMode('text')" id="mode-text">Nhập văn bản</button>
-            <button class="mode-btn" onclick="switchInputMode('file')" id="mode-file">Tải file</button>
-        </div>
-
         <!-- Text Input -->
-        <div class="input-section" id="text-input-section">
+        <div class="input-section">
             <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2px;">
               <label id="input-label">Nhập văn bản Hán Nôm cần tách từ:</label>
               <button class="copy-btn" onclick="cleanInputText()" style="padding: 4px 10px; font-size: 11px; border-color: var(--accent-purple); color: var(--accent-purple);">🧹 Dọn dẹp văn bản</button>
             </div>
             <textarea id="input-text" placeholder="Nhập hoặc dán văn bản Hán Nôm vào đây…"></textarea>
-        </div>
-
-        <!-- File Input -->
-        <div class="input-section" id="file-input-section" style="display: none;">
-            <label>Tải lên file (.txt, .docx):</label>
-            <div class="file-drop-zone" id="file-drop-zone">
-                <div class="icon">📄</div>
-                <p>Kéo thả file vào đây hoặc <strong>nhấp để chọn</strong></p>
-                <div class="formats">Hỗ trợ: .txt, .docx</div>
-                <input type="file" id="file-input" accept=".txt,.docx">
-                <div class="file-name-display" id="file-name-display"></div>
-            </div>
         </div>
 
         <button class="submit-btn" id="submit-btn" onclick="submitRequest()">
@@ -527,7 +457,6 @@
 <script>
     // ==================== STATE ====================
     let currentTab = 'segment';
-    let currentInputMode = 'text';
     let lastResult = '';
     let lastLabels = [];
 
@@ -574,38 +503,6 @@
         document.getElementById('stat-output-label').textContent = tab === 'segment' ? 'Số phân đoạn' : 'Số dấu câu';
     }
 
-    // ==================== INPUT MODE ====================
-    function switchInputMode(mode) {
-        currentInputMode = mode;
-        document.getElementById('mode-text').classList.toggle('active', mode === 'text');
-        document.getElementById('mode-file').classList.toggle('active', mode === 'file');
-        document.getElementById('text-input-section').style.display = mode === 'text' ? 'block' : 'none';
-        document.getElementById('file-input-section').style.display = mode === 'file' ? 'block' : 'none';
-    }
-
-    // ==================== FILE HANDLING ====================
-    const dropZone = document.getElementById('file-drop-zone');
-    const fileInput = document.getElementById('file-input');
-
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) {
-            fileInput.files = e.dataTransfer.files;
-            showFileName(e.dataTransfer.files[0].name);
-        }
-    });
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) showFileName(fileInput.files[0].name);
-    });
-
-    function showFileName(name) {
-        document.getElementById('file-name-display').textContent = '✅ ' + name;
-    }
-
     // ==================== API REQUESTS ====================
     function getApiUrl() {
         return document.getElementById('api-url').value.replace(/\/+$/, '');
@@ -630,37 +527,25 @@
         const errorToast = document.getElementById('error-toast');
         errorToast.classList.remove('visible');
 
+        const text = document.getElementById('input-text').value.trim();
+        if (!text) {
+            showError('Vui lòng nhập văn bản.');
+            return;
+        }
+
         btn.classList.add('loading');
         btn.disabled = true;
 
         const url = getApiUrl() + '/' + currentTab;
-        const formData = new FormData();
-
-        let inputLength = 0;
-        if (currentInputMode === 'text') {
-            const text = document.getElementById('input-text').value.trim();
-            if (!text) {
-                showError('Vui lòng nhập văn bản.');
-                btn.classList.remove('loading'); btn.disabled = false;
-                return;
-            }
-            formData.append('text', text);
-            inputLength = text.length;
-        } else {
-            const file = document.getElementById('file-input').files[0];
-            if (!file) {
-                showError('Vui lòng chọn file.');
-                btn.classList.remove('loading'); btn.disabled = false;
-                return;
-            }
-            formData.append('file', file);
-            inputLength = file.name;
-        }
 
         const startTime = performance.now();
 
         try {
-            const resp = await fetch(url, { method: 'POST', body: formData });
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text }),
+            });
             const elapsed = Math.round(performance.now() - startTime);
 
             if (!resp.ok) {
@@ -672,8 +557,7 @@
             lastResult = data.result;
             lastLabels = data.labels || [];
 
-            // Display results
-            renderResult(data, elapsed, inputLength);
+            renderResult(data, elapsed, text.length);
 
         } catch (e) {
             showError('Lỗi: ' + e.message);
@@ -690,8 +574,7 @@
 
         // Title
         const title = currentTab === 'segment' ? 'Kết quả Tách từ' : 'Kết quả Chấm câu';
-        const subtitle = data.input_type === 'file' ? ` — ${data.filename}` : '';
-        document.getElementById('result-title').textContent = title + subtitle;
+        document.getElementById('result-title').textContent = title;
 
         // Stats
         document.getElementById('stat-time').textContent = elapsedMs + 'ms';

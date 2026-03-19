@@ -3,11 +3,15 @@
 # =============================================================================
 # Build:
 #   docker build -t sinonom-api .
-#
-# Run (CPU):
-#   docker run -p 8000:8000 \
-#     -v /path/to/models:/app/models \
+# Run:
+#   docker run -d -p 8000:8000 \
+#     -v $(pwd)/models:/app/models \
+#     -v $(pwd)/pretrained:/app/pretrained \
+#     -e WORKERS=8 \ # Descrease workers if RAM is not enough
+#     --name sinonom-api-container \
 #     sinonom-api
+#
+#   *(On Windows PowerShell, use ${PWD} instead of $(pwd).)*
 # =============================================================================
 
 FROM python:3.11-slim
@@ -38,7 +42,7 @@ COPY api/ ./api/
 EXPOSE 8000
 
 # Environment variables (can be overridden at runtime)
-ENV MODEL_NAME="SIKU-BERT/sikubert" \
+ENV MODEL_NAME="pretrained/sikubert" \
     TOKENIZER_NAME="" \
     MAX_LENGTH="256" \
     SEG_MODEL_PATH="models/final_segmentation_model_cnn" \
@@ -46,7 +50,8 @@ ENV MODEL_NAME="SIKU-BERT/sikubert" \
     HEAD_TYPE="cnn" \
     CNN_NUM_FILTERS="256" \
     DROPOUT="0.1" \
-    USE_QLORA="1"
+    USE_QLORA="1" \
+    WORKERS="8"
 
-# Run the API server
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the API server with configurable workers
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS}"]

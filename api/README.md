@@ -54,13 +54,15 @@ pip install -r requirements.txt
 
 ### Start the API
 
-Run the standard `uvicorn` command from the **project root**:
+**Production** — run with multiple workers to handle concurrent requests (each worker loads its own model, increasing RAM usage):
 
 ```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 16
 ```
 
-For development with auto-reload:
+> ⚠️ `--reload` is **incompatible** with `--workers`. Use `--reload` only for development (single worker).
+
+**Development** (auto-reload, 1 worker):
 ```bash
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -107,11 +109,12 @@ The API is fully configurable. Defaults are set up to work out-of-the-box if you
 | `MAX_LENGTH` | `256` | Max sequence length for inference. |
 | `OVERLAP` | `128` | Sliding window overlap tokens. |
 | `HEAD_TYPE` | `cnn` | Type of classification head used. |
-| `USE_QLORA` | `0` | Set to `1` to enable QLoRA inference. |
+| `USE_QLORA` | `1` | Set to `1` to enable QLoRA inference. |
+| `WORKERS` | `1` | Number of Uvicorn workers. |
 
 You can pass these into Docker using `-e`:
 ```bash
-docker run -p 8000:8000 -e USE_QLORA=1 -v $(pwd)/models:/app/models -v $(pwd)/pretrained:/app/pretrained sinonom-api
+docker run -p 8000:8000 -e WORKERS=8 -v $(pwd)/models:/app/models -v $(pwd)/pretrained:/app/pretrained sinonom-api
 ```
 
 ---

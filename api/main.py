@@ -11,22 +11,19 @@ Endpoints:
 import logging
 import os
 import traceback
-import io
 import unicodedata
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, Form, File, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from typing import Union, Optional
 
 from api.inference import ModelManager
 from api.schemas import (
     ErrorResponse,
     HealthResponse,
-    TextPredictionResponse,
-    FilePredictionResponse,
+    PredictionResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +53,8 @@ LORA_R = int(os.getenv("LORA_R", "16"))
 LORA_ALPHA = int(os.getenv("LORA_ALPHA", "32"))
 LORA_DROPOUT = float(os.getenv("LORA_DROPOUT", "0.1"))
 LORA_TARGET_MODULES = os.getenv("LORA_TARGET_MODULES", "query,key,value").split(",")
+
+MAX_INPUT_TEXT_LENGTH = 2048
 
 
 # ============================================================================
@@ -165,31 +164,12 @@ async def internal_error_handler(request, exc):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"message": "Vui lòng cung cấp văn bản 'text' hoặc tải lên 'file'."},
+        content={"message": "Vui lòng cung cấp trường 'text' trong request body."},
     )
 
 # ============================================================================
 # UTILITIES
 # ============================================================================
-
-def parse_file_content(file: UploadFile) -> str:
-    """Parse the uploaded file based on its extension."""
-    if not file.filename:
-        raise ValueError("File name is missing.")
-    
-    file_bytes = file.file.read()
-    
-    if file.filename.endswith(".txt"):
-        return file_bytes.decode("utf-8").strip()
-    elif file.filename.endswith(".docx"):
-        try:
-            import docx
-        except ImportError:
-            raise RuntimeError("python-docx is not installed.")
-        doc = docx.Document(io.BytesIO(file_bytes))
-        return "\n".join([para.text for para in doc.paragraphs]).strip()
-    else:
-        raise ValueError("Unsupported file extension. Please upload .txt, .docx.")
 
 def preprocess_input_text(text: str) -> str:
     """Remove all punctuation marks and whitespace (including newlines) before inference.
@@ -220,7 +200,7 @@ async def health():
 
 @app.post(
     "/segment",
-    response_model=Union[TextPredictionResponse, FilePredictionResponse],
+    response_model=PredictionResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Bad Request"},
         422: {"model": ErrorResponse, "description": "Validation Error"},
@@ -231,21 +211,23 @@ async def health():
     tags=["Inference"],
 )
 async def segment(
-    text: Optional[str] = Form(None, description="Đoạn văn bản trực tiếp"),
-    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx)")
+    text: str = Body(..., embed=True, description="Đoạn văn bản cần phân đoạn"),
 ):
     """Segment raw classical Chinese text into words / phrases.
 
     Returns the text with ` | ` separators inserted between segments,
-    along with per-character BMES labels (if text input).
+    along with per-character BMES labels.
     """
-    has_text = text is not None and text.strip() != ""
-    has_file = file is not None
-
-    if (has_text and has_file) or (not has_text and not has_file):
+    if not text.strip():
         return JSONResponse(
             status_code=400,
-            content={"message": "Vui lòng cung cấp văn bản 'text' hoặc tải lên 'file'."}
+            content={"message": "Vui lòng cung cấp văn bản 'text'."}
+        )
+
+    if len(text) > MAX_INPUT_TEXT_LENGTH:
+        return JSONResponse(
+            status_code=400,
+            content={"message": f"Văn bản quá dài (tối đa {MAX_INPUT_TEXT_LENGTH} ký tự)."}
         )
 
     if not seg_manager.is_loaded:
@@ -254,23 +236,11 @@ async def segment(
             content={"message": "Segmentation model is not loaded. Please try again later."}
         )
 
-    is_file = has_file
-    if is_file:
-        try:
-            input_text = parse_file_content(file)
-        except ValueError as e:
-            return JSONResponse(status_code=400, content={"message": str(e)})
-        except Exception as e:
-            logger.error(f"Error parsing file: {e}\n{traceback.format_exc()}")
-            return JSONResponse(status_code=500, content={"message": "Lỗi khi đọc file."})
-    else:
-        input_text = text.strip()
-
-    input_text = preprocess_input_text(input_text)
+    input_text = preprocess_input_text(text.strip())
     if not input_text:
         return JSONResponse(
             status_code=400,
-            content={"message": "Vui lòng cung cấp văn bản 'text' hoặc tải lên 'file'."}
+            content={"message": "Văn bản sau khi xử lý rỗng. Vui lòng cung cấp văn bản hợp lệ."}
         )
 
     try:
@@ -282,25 +252,15 @@ async def segment(
             content={"message": "Inference failed due to an internal error."}
         )
 
-    if is_file:
-        return FilePredictionResponse(
-            status="success",
-            input_type="file",
-            filename=file.filename,
-            result=result_text
-        )
-    else:
-        return TextPredictionResponse(
-            status="success",
-            input_type="text",
-            result=result_text,
-            labels=labels
-        )
+    return PredictionResponse(
+        result=result_text,
+        labels=labels
+    )
 
 
 @app.post(
     "/punctuate",
-    response_model=Union[TextPredictionResponse, FilePredictionResponse],
+    response_model=PredictionResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Bad Request"},
         422: {"model": ErrorResponse, "description": "Validation Error"},
@@ -311,21 +271,23 @@ async def segment(
     tags=["Inference"],
 )
 async def punctuate(
-    text: Optional[str] = Form(None, description="Đoạn văn bản trực tiếp"),
-    file: Optional[UploadFile] = File(None, description="File cần xử lý (hỗ trợ .txt, .docx)")
+    text: str = Body(..., embed=True, description="Đoạn văn bản cần thêm dấu câu"),
 ):
     """Insert punctuation marks into raw classical Chinese text.
 
     Returns the text with punctuation (，。：、；？！) inserted,
-    along with per-character predicted labels (if text input).
+    along with per-character predicted labels.
     """
-    has_text = text is not None and text.strip() != ""
-    has_file = file is not None
-
-    if (has_text and has_file) or (not has_text and not has_file):
+    if not text.strip():
         return JSONResponse(
             status_code=400,
-            content={"message": "Vui lòng cung cấp văn bản 'text' hoặc tải lên 'file'."}
+            content={"message": "Vui lòng cung cấp văn bản 'text'."}
+        )
+
+    if len(text) > MAX_INPUT_TEXT_LENGTH:
+        return JSONResponse(
+            status_code=400,
+            content={"message": f"Văn bản quá dài (tối đa {MAX_INPUT_TEXT_LENGTH} ký tự)."}
         )
 
     if not punct_manager.is_loaded:
@@ -334,23 +296,11 @@ async def punctuate(
             content={"message": "Punctuation model is not loaded. Please try again later."}
         )
 
-    is_file = has_file
-    if is_file:
-        try:
-            input_text = parse_file_content(file)
-        except ValueError as e:
-            return JSONResponse(status_code=400, content={"message": str(e)})
-        except Exception as e:
-            logger.error(f"Error parsing file: {e}\n{traceback.format_exc()}")
-            return JSONResponse(status_code=500, content={"message": "Lỗi khi đọc file."})
-    else:
-        input_text = text.strip()
-
-    input_text = preprocess_input_text(input_text)
+    input_text = preprocess_input_text(text.strip())
     if not input_text:
         return JSONResponse(
             status_code=400,
-            content={"message": "Vui lòng cung cấp văn bản 'text' hoặc tải lên 'file'."}
+            content={"message": "Văn bản sau khi xử lý rỗng. Vui lòng cung cấp văn bản hợp lệ."}
         )
 
     try:
@@ -362,17 +312,7 @@ async def punctuate(
             content={"message": "Inference failed due to an internal error."}
         )
 
-    if is_file:
-        return FilePredictionResponse(
-            status="success",
-            input_type="file",
-            filename=file.filename,
-            result=result_text
-        )
-    else:
-        return TextPredictionResponse(
-            status="success",
-            input_type="text",
-            result=result_text,
-            labels=labels
-        )
+    return PredictionResponse(
+        result=result_text,
+        labels=labels
+    )
