@@ -112,12 +112,9 @@ The API is fully configurable. Defaults are set up to work out-of-the-box if you
 | `USE_QLORA` | `1` | Set to `1` to enable QLoRA inference. |
 | `WORKERS` | `1` | Number of Uvicorn workers. |
 
-> [!TIP]
-> For servers with **64GB RAM** and **16 CPU cores**, you can increase `WORKERS` to **16-24** for maximum performance (each worker consumes ~1.5-2GB RAM).
-
 You can pass these into Docker using `-e`:
 ```bash
-docker run -p 8000:8000 -e WORKERS=16 -v $(pwd)/models:/app/models -v $(pwd)/pretrained:/app/pretrained sinonom-api
+docker run -p 8000:8000 -e WORKERS=8 -v $(pwd)/models:/app/models -v $(pwd)/pretrained:/app/pretrained sinonom-api
 ```
 
 ---

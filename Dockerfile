@@ -7,7 +7,7 @@
 #   docker run -d -p 8000:8000 \
 #     -v $(pwd)/models:/app/models \
 #     -v $(pwd)/pretrained:/app/pretrained \
-#     -e WORKERS=16 \ # Descrease workers if RAM is not enough
+#     -e WORKERS=8 \ # Descrease workers if RAM is not enough
 #     --name sinonom-api-container \
 #     sinonom-api
 #
@@ -51,7 +51,7 @@ ENV MODEL_NAME="pretrained/sikubert" \
     CNN_NUM_FILTERS="256" \
     DROPOUT="0.1" \
     USE_QLORA="1" \
-    WORKERS="16"
+    WORKERS="8"
 
 # Run the API server with configurable workers
 CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS}"]
