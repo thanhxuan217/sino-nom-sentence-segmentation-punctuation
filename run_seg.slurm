@@ -1,16 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=sikubert_cnn           # Job name
-#SBATCH --output=cnn_logs/slurm_%j.out  # Output file (absolute path)
-#SBATCH --error=cnn_logs/slurm_%j.err   # Error file (absolute path)
+#SBATCH --job-name=seg           # Job name
+#SBATCH --output=seg_logs/slurm_%j.out  # Output file (absolute path)
+#SBATCH --error=seg_logs/slurm_%j.err   # Error file (absolute path)
 #SBATCH --partition=batch                 # Partition name
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks=1                        # Number of tasks
 #SBATCH --cpus-per-task=16                # CPUs per task
 #SBATCH --gres=gpu:2                      # Number of GPUs (change as needed)
 #SBATCH --mem=16G                         # Memory per node (max 64GB per server rules)
-#SBATCH --time=24:00:00                   # Time limit (max 48h per server rules)
-#SBATCH --mail-type=BEGIN,END,FAIL        # Email notifications
-#SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
+#SBATCH --time=48:00:00                   # Time limit (max 48h per server rules)
 
 set -euo pipefail
 
@@ -18,12 +16,12 @@ set -euo pipefail
 # LOAD CONFIGURATION
 # ============================================================================
 # Source the configuration file for parameters
-if [[ ! -f config.slurm ]]; then
-    echo "ERROR: config.slurm not found in $(pwd)"
+if [[ ! -f config_seg.slurm ]]; then
+    echo "ERROR: config_seg.slurm not found in $(pwd)"
     exit 1
 fi
 
-source config.slurm
+source config_seg.slurm
 
 # Set output/error files using absolute paths from config
 # Note: SLURM doesn't support variables in #SBATCH directives, so we set them here

@@ -1,15 +1,5 @@
 # Configuration file for SikuBERT Training
 # This file can be sourced in the SLURM script for easier parameter management
-# ============================================================================
-# SERVER RULES REMINDER (IMPORTANT!)
-# ============================================================================
-# - Max 2 jobs per group at a time
-# - Max resources per job: 16 CPUs, 64GB RAM, 2 GPUs
-# - Max runtime: 48 hours (jobs will be killed after this)
-# - Save checkpoints regularly as jobs may be interrupted
-# - Data storage: /media02/ddien02 (for source code & environments)
-# - GPU node /raid can be used for training data (node-specific)
-# ============================================================================
 
 # ============================================================================
 # WORKING DIRECTORY & GPU NODE
@@ -22,7 +12,7 @@ export CONDA_ENV="${WORKING_DIR}/envs/sikubert"
 # Run 'sinfo -N' to see available nodes
 export GPU_NODE="gpu04"  # Available: gpu01, gpu02, gpu03, gpu04
 # export DATA_DIR="/raid/${USER}/data"  # Node-local fast storage for large datasets
-export DATA_DIR="${WORKING_DIR}/data"  # Local storage for small datasets (slower)
+export DATA_DIR="${WORKING_DIR}/data_punc"  # Local storage for small datasets (slower)
 
 # ============================================================================
 # TASK CONFIGURATION
@@ -129,9 +119,9 @@ export FOCAL_GAMMA=2.0
 # ============================================================================
 # OUTPUT DIRECTORIES
 # ============================================================================
-export OUTPUT_DIR="${WORKING_DIR}/${HEAD_TYPE}_outputs"
-export MODEL_SAVE_DIR="${WORKING_DIR}/${HEAD_TYPE}_models"
-export LOG_DIR="${WORKING_DIR}/${HEAD_TYPE}_logs"
+export OUTPUT_DIR="${WORKING_DIR}/punc_outputs"
+export MODEL_SAVE_DIR="${WORKING_DIR}/punc_models"
+export LOG_DIR="${WORKING_DIR}/punc_logs"
 
 # ============================================================================
 # EVALUATION CONFIGURATION
@@ -145,11 +135,11 @@ export TEST_SPLIT="test"
 # For Trainer checkpoints: point to the checkpoint DIRECTORY (e.g., outputs/checkpoint-XXXX)
 # For legacy .pt files: point to the .pt file directly
 # UPDATE THIS to your actual best checkpoint path!
-export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/final_punctuation_model_cnn"
+export EVAL_MODEL_PATH="${MODEL_SAVE_DIR}/final_${TASK}_model_${HEAD_TYPE}"
 
 # ============================================================================
 # MULTI-PHASE TRAINING (Resume from checkpoint)
 # ============================================================================
 # Set to empty string "" if starting fresh, or path to checkpoint to resume
-# Example: export CHECKPOINT_PATH="${MODEL_SAVE_DIR}/best_segmentation_model_cnn.pt"
+# Example: export CHECKPOINT_PATH="${OUTPUT_DIR}/checkpoint-xxx"
 export CHECKPOINT_PATH=""

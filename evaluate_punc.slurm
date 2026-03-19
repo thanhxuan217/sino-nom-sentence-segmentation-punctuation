@@ -1,28 +1,26 @@
 #!/bin/bash
-#SBATCH --job-name=sikubert_eval           # Job name
-#SBATCH --output=logs/eval_%j.out  # Output file
-#SBATCH --error=logs/eval_%j.err   # Error file
+#SBATCH --job-name=eval_punc          # Job name
+#SBATCH --output=punc_logs/eval_%j.out  # Output file
+#SBATCH --error=punc_logs/eval_%j.err   # Error file
 #SBATCH --partition=batch                  # Partition name
 #SBATCH --nodes=1                          # Number of nodes
 #SBATCH --ntasks=1                         # Number of tasks
 #SBATCH --cpus-per-task=16                 # CPUs per task
 #SBATCH --gres=gpu:2                       # 2 GPUs for parallel inference
 #SBATCH --mem=16G                          # Memory per node
-#SBATCH --time=10:00:00                     # Time limit
-#SBATCH --mail-type=BEGIN,END,FAIL         # Email notifications
-#SBATCH --mail-user=xuanhuynh233@gmail.com # Your email
+#SBATCH --time=24:00:00                     # Time limit
 
 set -euo pipefail
 
 # ============================================================================
 # LOAD CONFIGURATION
 # ============================================================================
-if [[ ! -f config.slurm ]]; then
-    echo "ERROR: config.slurm not found in $(pwd)"
+if [[ ! -f config_punc.slurm ]]; then
+    echo "ERROR: config_punc.slurm not found in $(pwd)"
     exit 1
 fi
 
-source config.slurm
+source config_punc.slurm
 
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 
@@ -32,8 +30,6 @@ mkdir -p "${LOG_DIR}"
 # ============================================================================
 # SETUP ENVIRONMENT
 # ============================================================================
-
-mkdir -p logs outputs
 
 echo "=========================================="
 echo "Multi-GPU Evaluation Job"
